@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Tonal
+Comment=Audio routing and EQ manager for RODECaster Pro II
+Exec=python3 /home/thunt/Projects/tonal/tonal.py
+Icon=multimedia-equalizer
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Mixer;
+Keywords=audio;mixer;equalizer;pipewire;rodecaster;
+StartupNotify=true
