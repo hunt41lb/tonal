@@ -2,7 +2,7 @@
 Name=Tonal
 Comment=Audio routing and EQ manager for RODECaster Pro II
 Exec=python3 /home/thunt/Projects/tonal/tonal.py
-Icon=multimedia-equalizer
+Icon=/home/thunt/Projects/tonal/data/icons/com.tonal.app.svg
 Terminal=false
 Type=Application
 Categories=AudioVideo;Audio;Mixer;

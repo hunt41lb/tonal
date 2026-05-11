@@ -200,8 +200,17 @@ def apply_eq_live(state):
 
     eq = state["eq"]
     profile = eq["profiles"].get(eq["active_profile"], {})
-    preamp_db = profile.get("preamp_db", 0.0) if eq["enabled"] else 0.0
-    bands = profile.get("bands", []) if eq["enabled"] else []
+    profile_bands = profile.get("bands", [])
+
+    if eq["enabled"]:
+        preamp_db = profile.get("preamp_db", 0.0)
+        bands = profile_bands
+    else:
+        # EQ disabled — send bands with gain zeroed so running filter chain
+        # nodes are explicitly flattened. Without this, the band nodes keep
+        # their last-applied gain values since pw-cli set-param is per-property.
+        preamp_db = 0.0
+        bands = [{"freq": b["freq"], "q": b["q"], "gain": 0.0} for b in profile_bands]
 
     params_str = _build_eq_params(preamp_db, bands)
     updated = 0

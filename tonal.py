@@ -70,7 +70,7 @@ class TonalWindow(Adw.ApplicationWindow):
 
         self.channels_page = ChannelsPage(self.state, self.toast_overlay, self.mark_dirty)
         self.eq_page = EqualizerPage(self.state, self.toast_overlay, self.mark_dirty)
-        self.routing_page = RoutingPage(self.state)
+        self.routing_page = RoutingPage(self.state, self.toast_overlay, self.mark_dirty)
         self.status_page = StatusPage(self.state, self.toast_overlay)
 
         self.stack.add_titled_with_icon(self.channels_page, "channels", "Channels", "audio-card-symbolic")

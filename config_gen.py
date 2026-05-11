@@ -82,7 +82,13 @@ def generate_routing_conf(state):
     profile_name = eq["active_profile"]
     profile = eq["profiles"].get(profile_name, {"preamp_db": 0, "bands": []})
     preamp_db = profile["preamp_db"] if eq["enabled"] else 0.0
-    bands = profile["bands"] if eq["enabled"] else []
+    if eq["enabled"]:
+        bands = profile["bands"]
+    else:
+        # Keep band nodes in the filter chain but zero all gains, so the
+        # node infrastructure stays in place for live EQ updates when re-enabled.
+        bands = [{"freq": b["freq"], "q": b["q"], "gain": 0.0, "type": b["type"]}
+                 for b in profile["bands"]]
 
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
