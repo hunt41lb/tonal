@@ -1,5 +1,9 @@
 # Tonal
 
+<p align="center">
+  <img src="data/tonal-logo.png" alt="Tonal" width="400">
+</p>
+
 **Audio routing and parametric EQ manager for the RØDECaster Pro II on Linux.**
 
 Tonal is a GTK4/libadwaita desktop application that turns the RØDECaster Pro II's multi-channel USB output into a fully routable audio system on Linux. It generates PipeWire filter chain configurations, giving you per-channel parametric EQ and per-application audio routing — all managed through a native GNOME-style interface.
@@ -52,7 +56,7 @@ python3 tonal.py
 
 ### Desktop launcher (optional)
 
-Update the `Exec` path in `tonal.desktop` to match your install location, then install:
+Update the `Exec` and `Icon` paths in `tonal.desktop` to match your install location, then install:
 
 ```bash
 cp tonal.desktop ~/.local/share/applications/
@@ -101,6 +105,10 @@ tonal/
 │   └── status.py       # System status and actions page
 ├── widgets/
 │   └── eq_sliders.py   # Vertical EQ slider widget
+├── data/
+│   ├── tonal-logo.png  # Full logo lockup
+│   └── icons/
+│       └── com.tonal.app.svg  # Application icon
 ├── tonal.desktop       # Desktop launcher entry
 ├── pyrightconfig.json  # Pylance/Pyright configuration
 ├── .gitignore
