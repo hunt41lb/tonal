@@ -46,6 +46,30 @@ No Python packages beyond the standard library are required. All audio interacti
 
 ## Installation
 
+### Install from .deb package (recommended)
+
+Download the latest `.deb` from [Releases](https://github.com/hunt41lb/tonal/releases) and install:
+
+```bash
+sudo dpkg -i tonal_1.0.0_all.deb
+```
+
+If dependencies are missing, resolve them with:
+
+```bash
+sudo apt install -f
+```
+
+Tonal will be available in your application launcher and can also be run from the terminal with `tonal`.
+
+To uninstall:
+
+```bash
+sudo dpkg -r tonal
+```
+
+### Build from source
+
 Clone the repository and run directly — no build step required:
 
 ```bash
@@ -54,9 +78,19 @@ cd ~/Projects/tonal
 python3 tonal.py
 ```
 
-### Desktop launcher (optional)
+### Build the .deb package locally
 
-Update the `Exec` and `Icon` paths in `tonal.desktop` to match your install location, then install:
+```bash
+git clone https://github.com/hunt41lb/tonal.git ~/Projects/tonal
+cd ~/Projects/tonal
+chmod +x build-deb.sh
+./build-deb.sh
+sudo dpkg -i build/tonal_1.0.0_all.deb
+```
+
+### Desktop launcher (source installs only)
+
+If running from source, update the `Exec` and `Icon` paths in `tonal.desktop` to match your install location, then install:
 
 ```bash
 cp tonal.desktop ~/.local/share/applications/
