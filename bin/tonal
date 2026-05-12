@@ -1,0 +1,3 @@
+#!/bin/bash
+# Tonal — Audio routing and EQ manager for RODECaster Pro II
+exec python3 /usr/share/tonal/tonal.py "$@"
