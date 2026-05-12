@@ -1,0 +1,10 @@
+tonal (1.0.0-1) unstable; urgency=medium
+
+  * Initial release
+  * Multi-channel PipeWire routing for RODECaster Pro II
+  * Parametric EQ with profile management and live updates
+  * Per-application audio routing rules
+  * Hardware auto-detection (USB 1 Expanded/Standard, USB 2)
+  * App discovery for automatic routing rule creation
+
+ -- Thomas Hunt <hunt41lb@github.com>  Sun, 11 May 2025 12:00:00 -0400

@@ -1,0 +1,23 @@
+Source: tonal
+Section: sound
+Priority: optional
+Maintainer: Thomas Hunt <hunt41lb@github.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.0
+Homepage: https://github.com/hunt41lb/tonal
+
+Package: tonal
+Architecture: all
+Depends: python3 (>= 3.12),
+         python3-gi,
+         gir1.2-gtk-4.0,
+         gir1.2-adw-1,
+         pipewire,
+         pipewire-pulse,
+         wireplumber
+Description: Audio routing and EQ manager for RODECaster Pro II
+ Tonal is a GTK4/libadwaita desktop application that manages
+ PipeWire audio routing and parametric EQ for the RODECaster
+ Pro II on Linux. It creates per-channel filter chain sinks,
+ provides a full parametric equalizer with profile management,
+ and routes applications to specific audio channels automatically.
