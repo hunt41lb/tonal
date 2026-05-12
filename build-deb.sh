@@ -71,6 +71,7 @@ cp "${SCRIPT_DIR}/state.py"        "${APP_DIR}/"
 cp "${SCRIPT_DIR}/config_gen.py"   "${APP_DIR}/"
 cp "${SCRIPT_DIR}/pipewire_ctl.py" "${APP_DIR}/"
 cp "${SCRIPT_DIR}/eq_math.py"      "${APP_DIR}/"
+cp "${SCRIPT_DIR}/eq_import_export.py" "${APP_DIR}/"
 
 # Pages
 cp "${SCRIPT_DIR}/pages/__init__.py"   "${APP_DIR}/pages/"
@@ -90,7 +91,7 @@ chmod 755 "${PKG_DIR}/usr/bin/tonal"
 
 # ── Desktop entry ──────────────────────────────────────────────────
 mkdir -p "${PKG_DIR}/usr/share/applications"
-cp "${SCRIPT_DIR}/data/tonal.desktop" "${PKG_DIR}/usr/share/applications/"
+cp "${SCRIPT_DIR}/data/tonal.desktop" "${PKG_DIR}/usr/share/applications/com.tonal.app.desktop"
 
 # ── Icon ────────────────────────────────────────────────────────────
 mkdir -p "${PKG_DIR}/usr/share/icons/hicolor/scalable/apps"
