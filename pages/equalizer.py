@@ -3,10 +3,12 @@
 import copy
 import math
 import logging
+import os
 
-from gi.repository import Gtk, Adw
+from gi.repository import Gtk, Adw, Gio, GLib
 
 from eq_math import find_peak, FILTER_TYPES, FILTER_SHORT
+from eq_import_export import import_profile, export_apo, export_easyeffects
 from state import get_active_bands, get_active_preamp, save_profile_bands
 from widgets.eq_sliders import EqVerticalSliders
 
@@ -63,9 +65,17 @@ class EqualizerPage(Gtk.Box):
         delete_btn.connect("clicked", self._on_delete_profile)
         bb.append(delete_btn)
 
-        import_btn = Gtk.Button(icon_name="document-open-symbolic", tooltip_text="Import .peace",
+        import_btn = Gtk.Button(icon_name="document-open-symbolic",
+                                 tooltip_text="Import EQ profile (.txt / .json)",
                                  css_classes=["flat"])
+        import_btn.connect("clicked", self._on_import_profile)
         bb.append(import_btn)
+
+        export_btn = Gtk.Button(icon_name="document-send-symbolic",
+                                 tooltip_text="Export current profile",
+                                 css_classes=["flat"])
+        export_btn.connect("clicked", self._on_export_profile)
+        bb.append(export_btn)
 
         h.append(bb)
 
@@ -259,6 +269,191 @@ class EqualizerPage(Gtk.Box):
         self.mark_dirty()
         log.info("Deleted profile '%s', switched to '%s'", name, first_name)
         self.toast_overlay.add_toast(Adw.Toast(title=f'Deleted "{name}"', timeout=2))
+
+    # ── Import / Export ─────────────────────────────────────────────────────
+
+    def _on_import_profile(self, btn):
+        dialog = Gtk.FileDialog()
+        dialog.set_title("Import EQ Profile")
+
+        # File filters
+        filters = Gio.ListStore.new(Gtk.FileFilter)
+
+        f_all = Gtk.FileFilter()
+        f_all.set_name("All EQ profiles (*.txt, *.json, *.peace)")
+        f_all.add_pattern("*.txt")
+        f_all.add_pattern("*.json")
+        f_all.add_pattern("*.peace")
+        f_all.add_pattern("*.apeq")
+        filters.append(f_all)
+
+        f_apo = Gtk.FileFilter()
+        f_apo.set_name("EqualizerAPO (*.txt)")
+        f_apo.add_pattern("*.txt")
+        f_apo.add_pattern("*.apeq")
+        filters.append(f_apo)
+
+        f_peace = Gtk.FileFilter()
+        f_peace.set_name("Peace (*.peace)")
+        f_peace.add_pattern("*.peace")
+        filters.append(f_peace)
+
+        f_ee = Gtk.FileFilter()
+        f_ee.set_name("EasyEffects (*.json)")
+        f_ee.add_pattern("*.json")
+        filters.append(f_ee)
+
+        dialog.set_filters(filters)
+        dialog.open(self.get_root(), None, self._on_import_file_chosen)
+
+    def _on_import_file_chosen(self, dialog, result):
+        try:
+            file = dialog.open_finish(result)
+        except GLib.Error:
+            return  # user cancelled
+
+        path = file.get_path()
+        preamp_db, bands, error = import_profile(path)
+
+        if error:
+            self.toast_overlay.add_toast(Adw.Toast(title=f"Import failed: {error}", timeout=4))
+            return
+
+        # Ask for profile name, defaulting to the filename
+        basename = os.path.splitext(os.path.basename(path))[0]
+
+        name_dialog = Adw.AlertDialog(
+            heading="Import EQ profile",
+            body=f"Importing {len(bands)} band{'s' if len(bands) != 1 else ''} "
+                 f"with {preamp_db:+.1f} dB preamp.\n\nSave as profile:",
+        )
+
+        entry = Gtk.Entry(text=basename, hexpand=True)
+        entry.set_activates_default(True)
+        name_dialog.set_extra_child(entry)
+        name_dialog.add_response("cancel", "Cancel")
+        name_dialog.add_response("import", "Import")
+        name_dialog.set_response_appearance("import", Adw.ResponseAppearance.SUGGESTED)
+        name_dialog.set_default_response("import")
+        name_dialog.set_close_response("cancel")
+        name_dialog.connect("response", lambda d, r: self._do_import(
+            r, entry.get_text(), preamp_db, bands))
+        name_dialog.present(self.get_root())
+
+    def _do_import(self, response, name, preamp_db, bands):
+        if response != "import":
+            return
+        name = name.strip()
+        if not name:
+            self.toast_overlay.add_toast(Adw.Toast(title="Profile name cannot be empty", timeout=2))
+            return
+
+        # If name already exists, append a number
+        base_name = name
+        counter = 1
+        while name in self.state["eq"]["profiles"]:
+            name = f"{base_name} ({counter})"
+            counter += 1
+
+        new_profile = {
+            "preamp_db": preamp_db,
+            "bands": copy.deepcopy(bands),
+        }
+
+        self.state["eq"]["profiles"][name] = new_profile
+        self.state["eq"]["active_profile"] = name
+
+        # Load into UI
+        self.bands = [b.copy() for b in bands]
+        self.preamp_db = preamp_db
+        self.pa_scale.set_value(self.preamp_db)
+        self.pa_label.set_text(f"{self.preamp_db:+.1f}")
+        self.sliders.bands = self.bands
+        self.sliders.rebuild()
+
+        self._rebuild_profile_dropdown()
+        self.mark_dirty()
+        log.info("Imported profile '%s': %d bands, preamp %.1f dB", name, len(bands), preamp_db)
+        self.toast_overlay.add_toast(
+            Adw.Toast(title=f'Imported "{name}" — {len(bands)} bands', timeout=3))
+
+    def _on_export_profile(self, btn):
+        if not self.bands:
+            self.toast_overlay.add_toast(
+                Adw.Toast(title="Nothing to export — add some EQ bands first", timeout=2))
+            return
+
+        # Ask which format
+        dialog = Adw.AlertDialog(
+            heading="Export EQ profile",
+            body=f'Export "{self.state["eq"]["active_profile"]}" as:',
+        )
+
+        fmt_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        apo_radio = Gtk.CheckButton(label="EqualizerAPO (.txt) — universal, works with AutoEQ/Peace/EasyEffects")
+        apo_radio.set_active(True)
+        fmt_box.append(apo_radio)
+
+        ee_radio = Gtk.CheckButton(label="EasyEffects (.json) — native EasyEffects format")
+        ee_radio.set_group(apo_radio)
+        fmt_box.append(ee_radio)
+
+        dialog.set_extra_child(fmt_box)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("export", "Export")
+        dialog.set_response_appearance("export", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("export")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", lambda d, r: self._do_export_choose_file(
+            r, "apo" if apo_radio.get_active() else "easyeffects"))
+        dialog.present(self.get_root())
+
+    def _do_export_choose_file(self, response, fmt):
+        if response != "export":
+            return
+
+        profile_name = self.state["eq"]["active_profile"]
+        safe_name = profile_name.replace("/", "_").replace(" ", "_")
+        ext = ".txt" if fmt == "apo" else ".json"
+
+        dialog = Gtk.FileDialog()
+        dialog.set_title("Save EQ Profile")
+        dialog.set_initial_name(f"{safe_name}{ext}")
+
+        # File filter for the chosen format
+        filters = Gio.ListStore.new(Gtk.FileFilter)
+        f = Gtk.FileFilter()
+        if fmt == "apo":
+            f.set_name("EqualizerAPO (*.txt)")
+            f.add_pattern("*.txt")
+        else:
+            f.set_name("EasyEffects (*.json)")
+            f.add_pattern("*.json")
+        filters.append(f)
+        dialog.set_filters(filters)
+
+        dialog.save(self.get_root(), None,
+                     lambda d, result, fm=fmt, pn=profile_name: self._on_export_file_chosen(d, result, fm, pn))
+
+    def _on_export_file_chosen(self, dialog, result, fmt, profile_name):
+        try:
+            file = dialog.save_finish(result)
+        except GLib.Error:
+            return  # user cancelled
+
+        path = file.get_path()
+
+        if fmt == "apo":
+            ok, error = export_apo(path, self.preamp_db, self.bands, profile_name)
+        else:
+            ok, error = export_easyeffects(path, self.preamp_db, self.bands, profile_name)
+
+        if ok:
+            self.toast_overlay.add_toast(
+                Adw.Toast(title=f"Exported to {os.path.basename(path)}", timeout=3))
+        else:
+            self.toast_overlay.add_toast(
+                Adw.Toast(title=f"Export failed: {error}", timeout=4))
 
     # ── Event handlers ──────────────────────────────────────────────────────
 
