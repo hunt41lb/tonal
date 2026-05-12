@@ -93,24 +93,34 @@ Each channel appears as a selectable audio output device in your system sound se
 
 ```
 tonal/
-├── tonal.py            # Application entry point, main window
-├── state.py            # State management, hardware detection
-├── config_gen.py       # PipeWire config file generation
-├── pipewire_ctl.py     # PipeWire interaction (restart, live EQ, stream routing)
-├── eq_math.py          # Biquad filter math and frequency response
+├── tonal.py                          # App entry point, main window
+├── state.py                          # State management, hardware detection
+├── config_gen.py                     # PipeWire config file generation
+├── pipewire_ctl.py                   # PipeWire interaction (restart, live EQ, streams)
+├── eq_math.py                        # Biquad filter math and frequency response
 ├── pages/
-│   ├── channels.py     # Channel management page
-│   ├── equalizer.py    # Parametric EQ page
-│   ├── routing.py      # App routing rules page
-│   └── status.py       # System status and actions page
+│   ├── __init__.py                   # Empty package init
+│   ├── channels.py                   # Channel management page
+│   ├── equalizer.py                  # Parametric EQ page
+│   ├── routing.py                    # App routing rules page
+│   └── status.py                     # System status and actions page
 ├── widgets/
-│   └── eq_sliders.py   # Vertical EQ slider widget
+│   ├── __init__.py                   # Empty package init
+│   └── eq_sliders.py                 # Vertical EQ slider widget
+├── bin/
+│   └── tonal                         # Launcher script (→ /usr/bin/tonal)
 ├── data/
-│   ├── tonal-logo.png  # Full logo lockup
+│   ├── tonal-logo.png                # Full logo lockup for README
+│   ├── tonal.desktop                 # System .desktop entry (used by .deb)
 │   └── icons/
-│       └── com.tonal.app.svg  # Application icon
-├── tonal.desktop       # Desktop launcher entry
-├── pyrightconfig.json  # Pylance/Pyright configuration
+│       └── com.tonal.app.svg         # App icon (transparent background)
+├── debian/
+│   ├── control                       # Package metadata and dependencies
+│   ├── changelog                     # Version history
+│   └── copyright                     # MIT license (Debian format)
+├── build-deb.sh                      # Script to build the .deb package
+├── tonal.desktop                     # Dev .desktop entry (hardcoded paths)
+├── pyrightconfig.json                # Pylance/Pyright config
 ├── .gitignore
 ├── LICENSE
 └── README.md
