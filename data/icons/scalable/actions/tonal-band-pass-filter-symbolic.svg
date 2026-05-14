@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+  <!-- X axis -->
+  <line x1="1" y1="7.5" x2="15" y2="7.5" opacity="0.4" />
+  <!-- Y axis -->
+  <line x1="1" y1="2" x2="1" y2="13" opacity="0.4" />
+  <!-- Band-pass filter curve: rolloff up, flat passband, rolloff down -->
+  <path d="M1 13 L2 13 C2.5 13 3 12 3.5 10 C4 8 4.5 4.5 5 4 L11 4 C11.5 4.5 12 8 12.5 10 C13 12 13.5 13 14 13 L15 13" />
+</svg>
