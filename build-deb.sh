@@ -72,6 +72,7 @@ cp "${SCRIPT_DIR}/config_gen.py"   "${APP_DIR}/"
 cp "${SCRIPT_DIR}/pipewire_ctl.py" "${APP_DIR}/"
 cp "${SCRIPT_DIR}/eq_math.py"      "${APP_DIR}/"
 cp "${SCRIPT_DIR}/eq_import_export.py" "${APP_DIR}/"
+cp "${SCRIPT_DIR}/vu_meter.py"         "${APP_DIR}/"
 
 # Pages
 cp "${SCRIPT_DIR}/pages/__init__.py"   "${APP_DIR}/pages/"
@@ -93,10 +94,16 @@ chmod 755 "${PKG_DIR}/usr/bin/tonal"
 mkdir -p "${PKG_DIR}/usr/share/applications"
 cp "${SCRIPT_DIR}/data/tonal.desktop" "${PKG_DIR}/usr/share/applications/com.tonal.app.desktop"
 
-# ── Icon ────────────────────────────────────────────────────────────
+# ── Icons ───────────────────────────────────────────────────────────
+# App icon → system hicolor theme (for dock/launcher)
 mkdir -p "${PKG_DIR}/usr/share/icons/hicolor/scalable/apps"
 cp "${SCRIPT_DIR}/data/icons/com.tonal.app.svg" \
    "${PKG_DIR}/usr/share/icons/hicolor/scalable/apps/"
+
+# Custom action icons → app data dir (for in-app toolbar buttons)
+mkdir -p "${APP_DIR}/data/icons/scalable/actions"
+cp "${SCRIPT_DIR}"/data/icons/scalable/actions/*.svg \
+   "${APP_DIR}/data/icons/scalable/actions/"
 
 # ── Build the .deb ──────────────────────────────────────────────────
 dpkg-deb --build "${PKG_DIR}"
