@@ -5,14 +5,51 @@ import math
 import logging
 import os
 
-from gi.repository import Gtk, Adw, Gio, GLib
+from gi.repository import Gtk, Adw, Gdk, Gio, GLib
 
 from eq_math import find_peak, FILTER_TYPES, FILTER_SHORT
 from eq_import_export import import_profile, export_apo, export_easyeffects
 from state import get_active_bands, get_active_preamp, save_profile_bands
 from widgets.eq_sliders import EqVerticalSliders
+from vu_meter import VuMeter
 
 log = logging.getLogger("tonal.eq")
+
+# Resolve icon directory once at import time
+_ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
+                          "data", "icons", "scalable", "actions")
+
+
+def _icon_button(icon_name, tooltip, css_classes=None):
+    """Create a button with a custom SVG icon, recolored to match the current theme."""
+    from gi.repository import GdkPixbuf
+
+    css = css_classes or ["flat"]
+    path = os.path.join(_ICON_DIR, f"{icon_name}.svg")
+    if os.path.exists(path):
+        # Detect light/dark theme
+        style_manager = Adw.StyleManager.get_default()
+        fg_color = "#ffffff" if style_manager.get_dark() else "#000000"
+
+        # Read SVG and replace stroke color to match theme
+        with open(path, "r") as f:
+            svg_data = f.read()
+        svg_data = svg_data.replace('stroke="#000000"', f'stroke="{fg_color}"')
+
+        # Load SVG from string via GdkPixbuf
+        loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
+        loader.set_size(16, 16)
+        loader.write(svg_data.encode("utf-8"))
+        loader.close()
+        pixbuf = loader.get_pixbuf()
+        texture = Gdk.Texture.new_for_pixbuf(pixbuf)
+        image = Gtk.Image.new_from_paintable(texture)
+        image.set_pixel_size(16)
+        btn = Gtk.Button(child=image, tooltip_text=tooltip, css_classes=css)
+    else:
+        btn = Gtk.Button(icon_name="image-missing-symbolic", tooltip_text=tooltip, css_classes=css)
+        log.warning("Custom icon not found: %s", path)
+    return btn
 
 
 def _add_scroll_block(w):
@@ -23,57 +60,62 @@ def _add_scroll_block(w):
 
 
 class EqualizerPage(Gtk.Box):
-    def __init__(self, state, toast_overlay, mark_dirty):
+    def __init__(self, state, toast_overlay, mark_dirty, mark_clean=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, vexpand=True,
                         margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         self.state = state
         self.toast_overlay = toast_overlay
         self.mark_dirty = mark_dirty
+        self.mark_clean = mark_clean
         self.bands = [b.copy() for b in get_active_bands(state)]
         self.preamp_db = get_active_preamp(state)
+
+        # Delete button hover CSS — uses Adwaita's @error_color for theme consistency
+        css = Gtk.CssProvider()
+        css.load_from_string("""
+            .profile-delete-btn:hover { color: @error_color; }
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
 
         self.vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, vexpand=True)
         self.append(self.vbox)
         self._build_top_bar()
         self._build_preamp()
+        self._build_peak_meter()
         self._build_sliders()
+        self._update_peak_meter()
 
     def _build_top_bar(self):
         h = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
 
-        # Profile selector
-        pb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
-        pb.append(Gtk.Label(label="Profile", xalign=0, css_classes=["dim-label"]))
-        self._build_profile_dropdown(pb)
+        # Profile selector (MenuButton with popover listing profiles + delete)
+        pb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0, hexpand=True)
+        self._build_profile_selector(pb)
         h.append(pb)
 
         # Profile management buttons
         bb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4, valign=Gtk.Align.END)
 
-        new_btn = Gtk.Button(icon_name="document-new-symbolic", tooltip_text="New profile",
-                              css_classes=["flat"])
+        new_btn = _icon_button("tonal-profile-new-symbolic", "New profile")
         new_btn.connect("clicked", self._on_new_profile)
         bb.append(new_btn)
 
-        save_btn = Gtk.Button(icon_name="document-save-symbolic", tooltip_text="Save profile",
-                               css_classes=["flat"])
+        save_btn = _icon_button("tonal-profile-save-symbolic", "Save profile as...")
         save_btn.connect("clicked", self._on_save_profile)
         bb.append(save_btn)
 
-        delete_btn = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text="Delete profile",
-                                 css_classes=["flat"])
-        delete_btn.connect("clicked", self._on_delete_profile)
-        bb.append(delete_btn)
+        undo_btn = _icon_button("tonal-profile-clear-symbolic", "Undo changes")
+        undo_btn.connect("clicked", self._on_undo)
+        bb.append(undo_btn)
 
-        import_btn = Gtk.Button(icon_name="document-open-symbolic",
-                                 tooltip_text="Import EQ profile (.txt / .json)",
-                                 css_classes=["flat"])
+        import_btn = _icon_button("tonal-profile-import-symbolic",
+                                   "Import EQ profile (.txt / .json / .peace)")
         import_btn.connect("clicked", self._on_import_profile)
         bb.append(import_btn)
 
-        export_btn = Gtk.Button(icon_name="document-send-symbolic",
-                                 tooltip_text="Export current profile",
-                                 css_classes=["flat"])
+        export_btn = _icon_button("tonal-profile-export-symbolic", "Export current profile")
         export_btn.connect("clicked", self._on_export_profile)
         bb.append(export_btn)
 
@@ -101,24 +143,59 @@ class EqualizerPage(Gtk.Box):
 
         self.vbox.append(h)
 
-    def _build_profile_dropdown(self, parent):
-        """Build or rebuild the profile dropdown. Removes old one if present."""
-        if hasattr(self, "profile_dd") and self.profile_dd.get_parent():
-            self.profile_dd.get_parent().remove(self.profile_dd)
+    def _build_profile_selector(self, parent):
+        """Build profile selector as a MenuButton with a popover listing profiles."""
+        if hasattr(self, "profile_menu_btn") and self.profile_menu_btn.get_parent():
+            self.profile_menu_btn.get_parent().remove(self.profile_menu_btn)
 
-        profile_names = list(self.state["eq"]["profiles"].keys())
-        self.profile_dd = Gtk.DropDown.new_from_strings(profile_names)
-        active_idx = profile_names.index(self.state["eq"]["active_profile"]) \
-            if self.state["eq"]["active_profile"] in profile_names else 0
-        self.profile_dd.set_selected(active_idx)
-        self.profile_dd.connect("notify::selected", self._on_profile_changed)
-        parent.append(self.profile_dd)
+        active = self.state["eq"]["active_profile"]
+        self.profile_menu_btn = Gtk.MenuButton(
+            tooltip_text="Select or manage profiles",
+            hexpand=True,
+        )
+        # Custom left-aligned label
+        self._profile_btn_label = Gtk.Label(label=f"Profile: {active}", xalign=0, hexpand=True)
+        self.profile_menu_btn.set_child(self._profile_btn_label)
 
-    def _rebuild_profile_dropdown(self):
-        """Rebuild the dropdown in place after profiles change."""
-        parent = self.profile_dd.get_parent()
+        popover = Gtk.Popover()
+        popover_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0,
+                               margin_top=4, margin_bottom=4, margin_start=4, margin_end=4)
+
+        profiles = list(self.state["eq"]["profiles"].keys())
+        can_delete = len(profiles) > 1
+
+        for name in profiles:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+
+            # Profile name button (selects the profile)
+            label_btn = Gtk.Button(label=name, hexpand=True, css_classes=["flat"])
+            label_btn.set_halign(Gtk.Align.FILL)
+            if name == active:
+                label_btn.add_css_class("suggested-action")
+            label_btn.connect("clicked",
+                               lambda b, n=name, p=popover: self._on_profile_selected(n, p))
+            row.append(label_btn)
+
+            # Delete button (red on hover via .profile-delete-btn CSS)
+            if can_delete:
+                del_btn = _icon_button("tonal-profile-delete-symbolic",
+                                        f'Delete "{name}"',
+                                        css_classes=["flat", "profile-delete-btn"])
+                del_btn.connect("clicked",
+                                 lambda b, n=name, p=popover: self._on_delete_profile_by_name(n, p))
+                row.append(del_btn)
+
+            popover_box.append(row)
+
+        popover.set_child(popover_box)
+        self.profile_menu_btn.set_popover(popover)
+        parent.append(self.profile_menu_btn)
+
+    def _rebuild_profile_selector(self):
+        """Rebuild the profile selector in place after profiles change."""
+        parent = self.profile_menu_btn.get_parent()
         if parent:
-            self._build_profile_dropdown(parent)
+            self._build_profile_selector(parent)
 
     def _build_preamp(self):
         h = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -131,11 +208,20 @@ class EqualizerPage(Gtk.Box):
         self.pa_scale.connect("value-changed", self._on_preamp)
         _add_scroll_block(self.pa_scale)
         h.append(self.pa_scale)
-        self.pa_label = Gtk.Label(label=f"{self.preamp_db:+.1f}", width_chars=6, xalign=1.0,
-                                   css_classes=["monospace"])
+        self.pa_label = Gtk.Label(label=f"{self.preamp_db:+.1f} dB", width_chars=14, xalign=1.0,
+                                   css_classes=["monospace", "caption", "dim-label"])
         h.append(self.pa_label)
-        h.append(Gtk.Label(label="dB", css_classes=["dim-label"]))
         self.vbox.append(h)
+
+    def _build_peak_meter(self):
+        """Build real-time VU meter with EQ peak overlay."""
+        self.vu_meter = VuMeter(eq_peak_db=find_peak(self.bands, preamp_db=self.preamp_db))
+        self.vbox.append(self.vu_meter)
+
+    def _update_peak_meter(self):
+        """Update the EQ theoretical peak marker on the VU meter."""
+        peak = find_peak(self.bands, preamp_db=self.preamp_db)
+        self.vu_meter.set_eq_peak(peak)
 
     def _build_sliders(self):
         self.slider_scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
@@ -145,11 +231,127 @@ class EqualizerPage(Gtk.Box):
         self.slider_scroll.set_child(self.sliders)
         self.vbox.append(self.slider_scroll)
 
-    # ── Public method for window to call before apply ───────────────────────
+    # ── Public methods for window to call before apply ──────────────────────
 
     def save_to_state(self):
-        """Write current EQ bands and preamp into the state (called by window on Apply)."""
+        """Write current EQ bands and preamp into the state (direct, no dialog)."""
         save_profile_bands(self.state, self.bands, self.preamp_db)
+
+    def save_to_state_interactive(self, then_callback):
+        """Show Save As dialog, then call the callback when done."""
+        current_name = self.state["eq"]["active_profile"]
+
+        dialog = Adw.AlertDialog(
+            heading="Save & Apply profile as",
+            body="Keep the same name to overwrite, or enter a new name to save a copy.",
+        )
+
+        entry = Gtk.Entry(text=current_name, hexpand=True)
+        entry.set_activates_default(True)
+        dialog.set_extra_child(entry)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("save", "Save & Apply")
+        dialog.set_response_appearance("save", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("save")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", lambda d, r: self._do_save_interactive(
+            r, entry.get_text(), current_name, then_callback))
+        dialog.present(self.get_root())
+
+    def _do_save_interactive(self, response, new_name, original_name, then_callback):
+        if response != "save":
+            return
+        new_name = new_name.strip()
+        if not new_name:
+            self.toast_overlay.add_toast(Adw.Toast(title="Profile name cannot be empty", timeout=2))
+            return
+
+        # Save current bands/preamp to the target profile
+        profile_data = {
+            "preamp_db": self.preamp_db,
+            "bands": copy.deepcopy(self.bands),
+        }
+        self.state["eq"]["profiles"][new_name] = profile_data
+        self.state["eq"]["active_profile"] = new_name
+
+        if new_name != original_name:
+            log.info("Save & Apply as '%s' (original '%s' unchanged)", new_name, original_name)
+            self._rebuild_profile_selector()
+        else:
+            log.info("Save & Apply overwriting '%s'", new_name)
+
+        # Continue with the apply
+        then_callback()
+
+    # ── Profile selector handlers ───────────────────────────────────────────
+
+    def _on_profile_selected(self, name, popover):
+        """User selected a profile from the popover."""
+        popover.popdown()
+        if name == self.state["eq"]["active_profile"]:
+            return
+
+        self.state["eq"]["active_profile"] = name
+        profile = self.state["eq"]["profiles"][name]
+        self.bands = [b.copy() for b in profile.get("bands", [])]
+        self.preamp_db = profile.get("preamp_db", 0.0)
+        self.pa_scale.set_value(self.preamp_db)
+        self.pa_label.set_text(f"{self.preamp_db:+.1f} dB")
+        self.sliders.bands = self.bands
+        self.sliders.rebuild()
+        self._rebuild_profile_selector()
+        self.vu_meter.reset_peak()
+        self.mark_dirty()
+
+    def _on_delete_profile_by_name(self, name, popover):
+        """Delete a specific profile from the popover."""
+        popover.popdown()
+        profiles = self.state["eq"]["profiles"]
+
+        if len(profiles) <= 1:
+            self.toast_overlay.add_toast(
+                Adw.Toast(title="Cannot delete the only profile", timeout=2))
+            return
+
+        dialog = Adw.AlertDialog(
+            heading="Delete profile?",
+            body=f'Permanently delete "{name}"? This cannot be undone.',
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("delete", "Delete")
+        dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", lambda d, r: self._do_delete_profile(r, name))
+        dialog.present(self.get_root())
+
+    def _do_delete_profile(self, response, name):
+        if response != "delete":
+            return
+        profiles = self.state["eq"]["profiles"]
+        if name not in profiles or len(profiles) <= 1:
+            return
+
+        was_active = (name == self.state["eq"]["active_profile"])
+        del profiles[name]
+
+        if was_active:
+            # Switch to the first remaining profile
+            first_name = next(iter(profiles))
+            self.state["eq"]["active_profile"] = first_name
+            first_profile = profiles[first_name]
+
+            self.bands = [b.copy() for b in first_profile.get("bands", [])]
+            self.preamp_db = first_profile.get("preamp_db", 0.0)
+            self.pa_scale.set_value(self.preamp_db)
+            self.pa_label.set_text(f"{self.preamp_db:+.1f} dB")
+            self.sliders.bands = self.bands
+            self.sliders.rebuild()
+
+        self._rebuild_profile_selector()
+        self.mark_dirty()
+        log.info("Deleted profile '%s'", name)
+        self.toast_overlay.add_toast(Adw.Toast(title=f'Deleted "{name}"', timeout=2))
 
     # ── Profile management ──────────────────────────────────────────────────
 
@@ -207,68 +409,85 @@ class EqualizerPage(Gtk.Box):
         self.bands = [b.copy() for b in new_profile["bands"]]
         self.preamp_db = new_profile["preamp_db"]
         self.pa_scale.set_value(self.preamp_db)
-        self.pa_label.set_text(f"{self.preamp_db:+.1f}")
+        self.pa_label.set_text(f"{self.preamp_db:+.1f} dB")
         self.sliders.bands = self.bands
         self.sliders.rebuild()
 
-        self._rebuild_profile_dropdown()
+        self._rebuild_profile_selector()
         self.mark_dirty()
         log.info("Created new profile '%s' (copied=%s)", name, copy_current)
         self.toast_overlay.add_toast(Adw.Toast(title=f'Created profile "{name}"', timeout=2))
 
     def _on_save_profile(self, btn):
-        """Explicitly save current bands/preamp to the active profile."""
-        save_profile_bands(self.state, self.bands, self.preamp_db)
-        name = self.state["eq"]["active_profile"]
-        log.info("Saved profile '%s'", name)
-        self.toast_overlay.add_toast(Adw.Toast(title=f'Profile "{name}" saved', timeout=2))
-
-    def _on_delete_profile(self, btn):
-        name = self.state["eq"]["active_profile"]
-        profiles = self.state["eq"]["profiles"]
-
-        if len(profiles) <= 1:
-            self.toast_overlay.add_toast(
-                Adw.Toast(title="Cannot delete the only profile", timeout=2))
-            return
+        """Save As — dialog lets user keep the same name (overwrite) or rename."""
+        current_name = self.state["eq"]["active_profile"]
 
         dialog = Adw.AlertDialog(
-            heading="Delete profile?",
-            body=f'Permanently delete "{name}"? This cannot be undone.',
+            heading="Save profile as",
+            body="Keep the same name to overwrite, or enter a new name to save a copy.",
         )
+
+        entry = Gtk.Entry(text=current_name, hexpand=True)
+        entry.set_activates_default(True)
+        dialog.set_extra_child(entry)
         dialog.add_response("cancel", "Cancel")
-        dialog.add_response("delete", "Delete")
-        dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.set_default_response("cancel")
+        dialog.add_response("save", "Save")
+        dialog.set_response_appearance("save", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("save")
         dialog.set_close_response("cancel")
-        dialog.connect("response", lambda d, r: self._do_delete_profile(r, name))
+        dialog.connect("response", lambda d, r: self._do_save_as(
+            r, entry.get_text(), current_name))
         dialog.present(self.get_root())
 
-    def _do_delete_profile(self, response, name):
-        if response != "delete":
+    def _do_save_as(self, response, new_name, original_name):
+        if response != "save":
             return
-        profiles = self.state["eq"]["profiles"]
-        if name not in profiles or len(profiles) <= 1:
+        new_name = new_name.strip()
+        if not new_name:
+            self.toast_overlay.add_toast(Adw.Toast(title="Profile name cannot be empty", timeout=2))
             return
 
-        del profiles[name]
+        # Save current bands/preamp to the target profile
+        profile_data = {
+            "preamp_db": self.preamp_db,
+            "bands": copy.deepcopy(self.bands),
+        }
+        self.state["eq"]["profiles"][new_name] = profile_data
+        self.state["eq"]["active_profile"] = new_name
 
-        # Switch to the first remaining profile
-        first_name = next(iter(profiles))
-        self.state["eq"]["active_profile"] = first_name
-        first_profile = profiles[first_name]
+        if new_name == original_name:
+            log.info("Overwritten profile '%s'", new_name)
+            self.toast_overlay.add_toast(
+                Adw.Toast(title=f'Profile "{new_name}" saved', timeout=2))
+        else:
+            log.info("Saved as new profile '%s' (original '%s' unchanged)", new_name, original_name)
+            self.toast_overlay.add_toast(
+                Adw.Toast(title=f'Saved as "{new_name}" — original unchanged', timeout=3))
 
-        self.bands = [b.copy() for b in first_profile.get("bands", [])]
-        self.preamp_db = first_profile.get("preamp_db", 0.0)
+        self._rebuild_profile_selector()
+        self.vu_meter.reset_peak()
+        self.mark_dirty()
+
+    def _on_undo(self, btn):
+        """Revert all unsaved EQ changes back to the last saved state."""
+        name = self.state["eq"]["active_profile"]
+        profile = self.state["eq"]["profiles"].get(name, {})
+
+        self.bands = [b.copy() for b in profile.get("bands", [])]
+        self.preamp_db = profile.get("preamp_db", 0.0)
+
         self.pa_scale.set_value(self.preamp_db)
-        self.pa_label.set_text(f"{self.preamp_db:+.1f}")
+        self.pa_label.set_text(f"{self.preamp_db:+.1f} dB")
         self.sliders.bands = self.bands
         self.sliders.rebuild()
+        self._update_peak_meter()
+        self.vu_meter.reset_peak()
 
-        self._rebuild_profile_dropdown()
-        self.mark_dirty()
-        log.info("Deleted profile '%s', switched to '%s'", name, first_name)
-        self.toast_overlay.add_toast(Adw.Toast(title=f'Deleted "{name}"', timeout=2))
+        if self.mark_clean:
+            self.mark_clean()
+
+        log.info("Reverted to saved profile '%s'", name)
+        self.toast_overlay.add_toast(Adw.Toast(title=f'Changes reverted to "{name}"', timeout=2))
 
     # ── Import / Export ─────────────────────────────────────────────────────
 
@@ -367,11 +586,12 @@ class EqualizerPage(Gtk.Box):
         self.bands = [b.copy() for b in bands]
         self.preamp_db = preamp_db
         self.pa_scale.set_value(self.preamp_db)
-        self.pa_label.set_text(f"{self.preamp_db:+.1f}")
+        self.pa_label.set_text(f"{self.preamp_db:+.1f} dB")
         self.sliders.bands = self.bands
         self.sliders.rebuild()
 
-        self._rebuild_profile_dropdown()
+        self._rebuild_profile_selector()
+        self.vu_meter.reset_peak()
         self.mark_dirty()
         log.info("Imported profile '%s': %d bands, preamp %.1f dB", name, len(bands), preamp_db)
         self.toast_overlay.add_toast(
@@ -460,6 +680,7 @@ class EqualizerPage(Gtk.Box):
     def _on_change(self):
         self.mark_dirty()
         self._check_clip()
+        self._update_peak_meter()
 
     def _on_toggle(self, sw, state_val):
         self.state["eq"]["enabled"] = state_val
@@ -467,24 +688,10 @@ class EqualizerPage(Gtk.Box):
 
     def _on_preamp(self, scale):
         self.preamp_db = round(scale.get_value() * 2) / 2
-        self.pa_label.set_text(f"{self.preamp_db:+.1f}")
+        self.pa_label.set_text(f"{self.preamp_db:+.1f} dB")
         self.mark_dirty()
         self._check_clip()
-
-    def _on_profile_changed(self, dropdown, param):
-        profiles = list(self.state["eq"]["profiles"].keys())
-        idx = dropdown.get_selected()
-        if 0 <= idx < len(profiles):
-            name = profiles[idx]
-            self.state["eq"]["active_profile"] = name
-            profile = self.state["eq"]["profiles"][name]
-            self.bands = [b.copy() for b in profile.get("bands", [])]
-            self.preamp_db = profile.get("preamp_db", 0.0)
-            self.pa_scale.set_value(self.preamp_db)
-            self.pa_label.set_text(f"{self.preamp_db:+.1f}")
-            self.sliders.bands = self.bands
-            self.sliders.rebuild()
-            self.mark_dirty()
+        self._update_peak_meter()
 
     def _on_delete_request(self, idx):
         if idx < 0 or idx >= len(self.bands):
@@ -519,7 +726,7 @@ class EqualizerPage(Gtk.Box):
             new_pa = -math.ceil(peak * 2) / 2
             self.preamp_db = new_pa
             self.pa_scale.set_value(new_pa)
-            self.pa_label.set_text(f"{new_pa:+.1f}")
+            self.pa_label.set_text(f"{new_pa:+.1f} dB")
             self.mark_dirty()
             log.info("Auto-gain: peak %.1f dB → preamp %.1f dB", peak, new_pa)
 
