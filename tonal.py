@@ -69,7 +69,7 @@ class TonalWindow(Adw.ApplicationWindow):
         self.stack = Adw.ViewStack(vexpand=True)
 
         self.channels_page = ChannelsPage(self.state, self.toast_overlay, self.mark_dirty)
-        self.eq_page = EqualizerPage(self.state, self.toast_overlay, self.mark_dirty)
+        self.eq_page = EqualizerPage(self.state, self.toast_overlay, self.mark_dirty, self.mark_clean)
         self.routing_page = RoutingPage(self.state, self.toast_overlay, self.mark_dirty)
         self.status_page = StatusPage(self.state, self.toast_overlay)
 
@@ -111,8 +111,21 @@ class TonalWindow(Adw.ApplicationWindow):
         else:
             self.apply_label.set_text("Save & Apply *")
 
+    def mark_clean(self):
+        """Called when changes are undone/reverted — resets the dirty state."""
+        self.pending_changes = False
+        self.restart_needed = False
+        self.apply_btn.set_sensitive(False)
+        self.apply_label.set_text("Save & Apply")
+
     def _on_apply(self, btn):
-        self.eq_page.save_to_state()
+        # If on the Equalizer page, show Save As dialog first
+        if self.stack.get_visible_child() == self.eq_page:
+            self.eq_page.save_to_state_interactive(self._do_apply_after_save)
+        else:
+            self._do_apply_after_save()
+
+    def _do_apply_after_save(self):
         backup_profile_before_apply(self.state)
 
         self.apply_btn.set_sensitive(False)
@@ -153,6 +166,10 @@ class TonalWindow(Adw.ApplicationWindow):
         self.toast_overlay.add_toast(toast)
 
     def _on_close_request(self, window):
+        # Stop VU meter monitoring before closing
+        if hasattr(self.eq_page, 'vu_meter'):
+            self.eq_page.vu_meter.cleanup()
+
         if self.pending_changes:
             dialog = Adw.AlertDialog(
                 heading="Unsaved changes",
