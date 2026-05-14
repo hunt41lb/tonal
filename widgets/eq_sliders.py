@@ -1,7 +1,9 @@
-"""Peace-style vertical EQ sliders widget with editable parameters."""
+"""Peace-style vertical EQ sliders widget with editable parameters and filter icons."""
 
-from gi.repository import Gtk
-from eq_math import FILTER_TYPES, FILTER_SHORT
+import os
+
+from gi.repository import Gtk, Adw, Gdk, GdkPixbuf
+from eq_math import FILTER_TYPES, FILTER_LABELS
 
 
 def _block_scroll(_c, _dx, _dy):
@@ -13,6 +15,65 @@ def _add_scroll_block(w):
     c.connect("scroll", _block_scroll)
     w.add_controller(c)
 
+
+# ── Icon loading ────────────────────────────────────────────────────────────
+
+_ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
+                          "data", "icons", "scalable", "actions")
+
+# Map internal filter type to SVG icon filename
+_FILTER_ICON_NAMES = {
+    "peak": "tonal-peak-filter-symbolic",
+    "lowshelf": "tonal-low-shelf-filter-symbolic",
+    "highshelf": "tonal-high-shelf-filter-symbolic",
+    "lowpass": "tonal-low-pass-filter-symbolic",
+    "highpass": "tonal-high-pass-filter-symbolic",
+    "bandpass": "tonal-band-pass-filter-symbolic",
+    "notch": "tonal-notch-filter-symbolic",
+    "allpass": "tonal-all-pass-filter-symbolic",
+}
+
+# Full display names for the popover
+_FILTER_FULL_NAMES = {
+    "peak": "Peak Filter",
+    "lowshelf": "Low Shelf Filter",
+    "highshelf": "High Shelf Filter",
+    "lowpass": "Low Pass Filter",
+    "highpass": "High Pass Filter",
+    "bandpass": "Band Pass Filter",
+    "notch": "Notch Filter",
+    "allpass": "All Pass Filter",
+}
+
+
+def _load_filter_icon(filter_type, size=24):
+    """Load a filter icon SVG, recolored for the current theme."""
+    icon_name = _FILTER_ICON_NAMES.get(filter_type, "tonal-peak-filter-symbolic")
+    path = os.path.join(_ICON_DIR, f"{icon_name}.svg")
+    if not os.path.exists(path):
+        return Gtk.Image.new_from_icon_name("image-missing-symbolic")
+
+    style_manager = Adw.StyleManager.get_default()
+    fg_color = "#ffffff" if style_manager.get_dark() else "#000000"
+
+    with open(path, "r") as f:
+        svg_data = f.read()
+    # Handle both possible source formats
+    svg_data = svg_data.replace('stroke="currentColor"', f'stroke="{fg_color}"')
+    svg_data = svg_data.replace('stroke="#000000"', f'stroke="{fg_color}"')
+
+    loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
+    loader.set_size(size, size)
+    loader.write(svg_data.encode("utf-8"))
+    loader.close()
+    pixbuf = loader.get_pixbuf()
+    texture = Gdk.Texture.new_for_pixbuf(pixbuf)
+    image = Gtk.Image.new_from_paintable(texture)
+    image.set_pixel_size(size)
+    return image
+
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
 
 def _freq_display(freq):
     """Format frequency for display."""
@@ -51,6 +112,8 @@ def _parse_freq(text):
     except ValueError:
         return None
 
+
+# ── Widget ──────────────────────────────────────────────────────────────────
 
 class EqVerticalSliders(Gtk.Box):
     """Vertical sliders — one column per band, fills width and height."""
@@ -126,13 +189,9 @@ class EqVerticalSliders(Gtk.Box):
                             lambda f, e=gain_entry, b=band, s=scale: self._gain_entry_committed(e, b, s))
         gain_entry.add_controller(gain_focus)
 
-        # ── Filter type dropdown ────────────────────────────────────────
-        short_labels = [FILTER_SHORT[t] for t in FILTER_TYPES]
-        td = Gtk.DropDown.new_from_strings(short_labels)
-        td.set_selected(FILTER_TYPES.index(band["type"]) if band["type"] in FILTER_TYPES else 0)
-        td.add_css_class("eq-type-dd")
-        td.connect("notify::selected", lambda d, p, b=band: self._type_changed(d, b))
-        col.append(td)
+        # ── Filter type selector (icon button + popover) ────────────────
+        filter_btn = self._build_filter_selector(idx, band)
+        col.append(filter_btn)
 
         # ── Q input ─────────────────────────────────────────────────────
         q_entry = _make_entry(
@@ -153,6 +212,59 @@ class EqVerticalSliders(Gtk.Box):
         col.append(del_btn)
 
         return col
+
+    def _build_filter_selector(self, idx, band):
+        """Build a MenuButton showing the current filter icon, with a popover for selection."""
+        current_type = band["type"]
+        full_name = _FILTER_FULL_NAMES.get(current_type, "Peak Filter")
+
+        # Button shows the current filter's icon
+        icon = _load_filter_icon(current_type, size=24)
+        menu_btn = Gtk.MenuButton(
+            child=icon,
+            css_classes=["flat"],
+            tooltip_text=full_name,
+        )
+
+        # Popover with all filter types
+        popover = Gtk.Popover()
+        popover_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0,
+                               margin_top=4, margin_bottom=4, margin_start=4, margin_end=4)
+
+        for ftype in FILTER_TYPES:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+
+            row_icon = _load_filter_icon(ftype, size=14)
+            row.append(row_icon)
+
+            label = Gtk.Label(label=_FILTER_FULL_NAMES.get(ftype, ftype),
+                               xalign=0, hexpand=True)
+            row.append(label)
+
+            row_btn = Gtk.Button(child=row, css_classes=["flat"])
+            if ftype == current_type:
+                row_btn.add_css_class("suggested-action")
+            row_btn.connect("clicked",
+                             lambda b, ft=ftype, bd=band, mb=menu_btn, p=popover, i=idx:
+                             self._on_filter_selected(ft, bd, mb, p, i))
+            popover_box.append(row_btn)
+
+        popover.set_child(popover_box)
+        menu_btn.set_popover(popover)
+        return menu_btn
+
+    # ── Filter type selection ───────────────────────────────────────────
+
+    def _on_filter_selected(self, filter_type, band, menu_btn, popover, idx):
+        popover.popdown()
+        band["type"] = filter_type
+
+        # Update the button icon to reflect the new selection
+        new_icon = _load_filter_icon(filter_type, size=24)
+        menu_btn.set_child(new_icon)
+        menu_btn.set_tooltip_text(_FILTER_FULL_NAMES.get(filter_type, filter_type))
+
+        self._notify_change()
 
     # ── Frequency ───────────────────────────────────────────────────────
 
@@ -205,12 +317,6 @@ class EqVerticalSliders(Gtk.Box):
         except ValueError:
             pass
         entry.set_text(f"{band['q']:.2f}")
-
-    # ── Filter type ─────────────────────────────────────────────────────
-
-    def _type_changed(self, dropdown, band):
-        band["type"] = FILTER_TYPES[dropdown.get_selected()]
-        self._notify_change()
 
     # ── Add / Delete ────────────────────────────────────────────────────
 
