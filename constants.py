@@ -109,3 +109,7 @@ TYPE_TO_PIPEWIRE = {
     "notch":     "bq_notch",
     "allpass":   "bq_allpass",
 }
+
+# ── Application ─────────────────────────────────────────────────────────────
+
+APP_VERSION = "1.0.3"
