@@ -3,7 +3,7 @@
 # Usage: ./build-deb.sh
 set -e
 
-VERSION="1.0.0"
+VERSION="1.0.2"
 PKG_NAME="tonal"
 PKG_DIR="build/${PKG_NAME}_${VERSION}_all"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -64,13 +64,15 @@ chmod 755 "${PKG_DIR}/DEBIAN/postrm"
 APP_DIR="${PKG_DIR}/usr/share/tonal"
 mkdir -p "${APP_DIR}/pages"
 mkdir -p "${APP_DIR}/widgets"
+mkdir -p "${APP_DIR}/data"
 
 # Core modules
-cp "${SCRIPT_DIR}/tonal.py"        "${APP_DIR}/"
-cp "${SCRIPT_DIR}/state.py"        "${APP_DIR}/"
-cp "${SCRIPT_DIR}/config_gen.py"   "${APP_DIR}/"
-cp "${SCRIPT_DIR}/pipewire_ctl.py" "${APP_DIR}/"
-cp "${SCRIPT_DIR}/eq_math.py"      "${APP_DIR}/"
+cp "${SCRIPT_DIR}/tonal.py"            "${APP_DIR}/"
+cp "${SCRIPT_DIR}/constants.py"        "${APP_DIR}/"
+cp "${SCRIPT_DIR}/state.py"            "${APP_DIR}/"
+cp "${SCRIPT_DIR}/config_gen.py"       "${APP_DIR}/"
+cp "${SCRIPT_DIR}/pipewire_ctl.py"     "${APP_DIR}/"
+cp "${SCRIPT_DIR}/eq_math.py"          "${APP_DIR}/"
 cp "${SCRIPT_DIR}/eq_import_export.py" "${APP_DIR}/"
 cp "${SCRIPT_DIR}/vu_meter.py"         "${APP_DIR}/"
 
@@ -84,6 +86,10 @@ cp "${SCRIPT_DIR}/pages/status.py"     "${APP_DIR}/pages/"
 # Widgets
 cp "${SCRIPT_DIR}/widgets/__init__.py"    "${APP_DIR}/widgets/"
 cp "${SCRIPT_DIR}/widgets/eq_sliders.py"  "${APP_DIR}/widgets/"
+cp "${SCRIPT_DIR}/widgets/helpers.py"     "${APP_DIR}/widgets/"
+
+# Data (stylesheet)
+cp "${SCRIPT_DIR}/data/style.css"      "${APP_DIR}/data/"
 
 # ── Launcher ────────────────────────────────────────────────────────
 mkdir -p "${PKG_DIR}/usr/bin"
