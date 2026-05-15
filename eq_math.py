@@ -1,37 +1,7 @@
 """Biquad filter frequency response computation for Tonal."""
 
 import math
-
-SAMPLE_RATE = 48000
-
-# All supported filter types
-FILTER_TYPES = [
-    "peak", "lowshelf", "highshelf",
-    "lowpass", "highpass", "bandpass", "notch", "allpass",
-]
-
-FILTER_LABELS = {
-    "peak": "Peak",
-    "lowshelf": "Low Shelf",
-    "highshelf": "High Shelf",
-    "lowpass": "Low Pass",
-    "highpass": "High Pass",
-    "bandpass": "Band Pass",
-    "notch": "Notch",
-    "allpass": "All Pass",
-}
-
-FILTER_SHORT = {
-    "peak": "PK",
-    "lowshelf": "LS",
-    "highshelf": "HS",
-    "lowpass": "LP",
-    "highpass": "HP",
-    "bandpass": "BP",
-    "notch": "NO",
-    "allpass": "AP",
-}
-
+from constants import SAMPLE_RATE, FILTER_TYPES, FILTER_LABELS, FILTER_SHORT
 
 def _biquad_coeffs(f0, gain_db, q, filter_type):
     """Compute biquad filter coefficients (b0, b1, b2, a0, a1, a2)."""
