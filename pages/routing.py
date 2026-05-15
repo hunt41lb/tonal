@@ -3,16 +3,10 @@
 import logging
 
 from gi.repository import Gtk, Adw
+from widgets.helpers import scrollable_wrap
 import pipewire_ctl
 
 log = logging.getLogger("tonal.routing")
-
-
-def _scrollable(child):
-    sw = Gtk.ScrolledWindow(vexpand=True)
-    sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-    sw.set_child(child)
-    return sw
 
 
 class RoutingPage(Gtk.Box):
@@ -114,7 +108,7 @@ class RoutingPage(Gtk.Box):
         dr.set_activatable_widget(scan_btn)
         dg.add(dr)
 
-        self.append(_scrollable(inner))
+        self.append(scrollable_wrap(inner))
 
     # ── Channel dropdown changed ────────────────────────────────────────
 
