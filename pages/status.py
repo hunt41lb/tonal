@@ -3,14 +3,8 @@
 import threading
 
 from gi.repository import Gtk, Adw, GLib
+from widgets.helpers import scrollable_wrap
 import pipewire_ctl
-
-
-def _scrollable(child):
-    sw = Gtk.ScrolledWindow(vexpand=True)
-    sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-    sw.set_child(child)
-    return sw
 
 
 class StatusPage(Gtk.Box):
@@ -57,7 +51,7 @@ class StatusPage(Gtk.Box):
         xr.add_suffix(Gtk.Button(icon_name="view-refresh-symbolic", valign=Gtk.Align.CENTER,
                                   css_classes=["flat"])); ag.add(xr)
 
-        self.append(_scrollable(inner))
+        self.append(scrollable_wrap(inner))
 
     def _on_restart(self, btn):
         btn.set_sensitive(False)
