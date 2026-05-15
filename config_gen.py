@@ -4,20 +4,12 @@ import os
 import shutil
 import datetime
 import logging
+from constants import (
+    PIPEWIRE_CONF_DIR, PULSE_CONF_DIR, ROUTING_CONF, PULSE_CONF,
+    TYPE_TO_PIPEWIRE, TARGET_EXPANDED, TARGET_USB1_CHAT, TARGET_USB2,
+)
 
 log = logging.getLogger("tonal.config")
-
-PIPEWIRE_CONF_DIR = os.path.expanduser("~/.config/pipewire/pipewire.conf.d")
-PULSE_CONF_DIR = os.path.expanduser("~/.config/pipewire/pipewire-pulse.conf.d")
-ROUTING_CONF = os.path.join(PIPEWIRE_CONF_DIR, "20-rodecaster-routing.conf")
-PULSE_CONF = os.path.join(PULSE_CONF_DIR, "50-app-routing.conf")
-
-TYPE_TO_LABEL = {
-    "peak": "bq_peaking", "lowshelf": "bq_lowshelf", "highshelf": "bq_highshelf",
-    "lowpass": "bq_lowpass", "highpass": "bq_highpass", "bandpass": "bq_bandpass0",
-    "notch": "bq_notch", "allpass": "bq_allpass",
-}
-
 
 def _backup(path):
     if os.path.exists(path):
@@ -33,7 +25,7 @@ def _eq_nodes_and_links(preamp_db, bands):
     prev = "preamp"
     for i, band in enumerate(bands):
         name = f"eq{i:02d}"
-        label = TYPE_TO_LABEL.get(band["type"], "bq_peaking")
+        label = TYPE_TO_PIPEWIRE.get(band["type"], "bq_peaking")
         nodes.append(f'                    {{ type = builtin name = {name} label = {label} '
                      f'control = {{ "Freq" = {band["freq"]} "Q" = {band["q"]} "Gain" = {band["gain"]} }} }}')
         links.append(f'                    {{ output = "{prev}:Out" input = "{name}:In" }}')
@@ -93,7 +85,7 @@ def generate_routing_conf(state):
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # Only include the ALSA adapter if we have expanded channels
-    has_expanded = any(ch["target"] == "rodecaster_expanded" for ch in channels if ch["enabled"])
+    has_expanded = any(ch["target"] == TARGET_EXPANDED for ch in channels if ch["enabled"])
 
     lines = [
         f"# RODECaster Pro II — Multi-Channel Routing with Per-Channel EQ",
@@ -131,16 +123,16 @@ def generate_routing_conf(state):
             continue
 
         # Resolve target to actual PipeWire node name
-        if ch["target"] == "rodecaster_expanded":
+        if ch["target"] == TARGET_EXPANDED:
             target = "rodecaster_expanded"
             dont_remix = ch["position"] != ["FL", "FR"]
-        elif ch["target"] == "usb1_chat":
+        elif ch["target"] == TARGET_USB1_CHAT:
             target = hw.get("usb1_chat_node", "")
             if not target:
                 log.warning("USB 1 Chat node not detected, skipping channel '%s'", ch["name"])
                 continue
             dont_remix = False
-        elif ch["target"] == "usb2":
+        elif ch["target"] == TARGET_USB2:
             target = hw.get("usb2_node", "")
             if not target:
                 log.warning("USB 2 node not detected, skipping channel '%s'", ch["name"])
