@@ -2,25 +2,19 @@
 
 import logging
 from gi.repository import Gtk, Adw
+from constants import TARGET_EXPANDED, TARGET_USB1_CHAT, TARGET_USB2
+from widgets.helpers import scrollable_wrap
 
 log = logging.getLogger("tonal.channels")
-
-
-def _scrollable(child):
-    sw = Gtk.ScrolledWindow(vexpand=True)
-    sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-    sw.set_child(child)
-    return sw
-
 
 def _target_label(ch):
     target = ch.get("target", "")
     pos = ", ".join(ch.get("position", []))
-    if target == "rodecaster_expanded":
+    if target == TARGET_EXPANDED:
         return f"USB 1 Expanded  •  Channels: {pos}"
-    elif target == "usb1_chat":
+    elif target == TARGET_USB1_CHAT:
         return "USB 1 Chat  •  Stereo"
-    elif target == "usb2":
+    elif target == TARGET_USB2:
         return "USB 2 Secondary  •  Stereo"
     return f"{target}  •  {pos}"
 
@@ -122,7 +116,7 @@ class ChannelsPage(Gtk.Box):
             dr.add_prefix(Gtk.Image.new_from_icon_name("emblem-default-symbolic"))
             dg.add(dr)
 
-        self.append(_scrollable(inner))
+        self.append(scrollable_wrap(inner))
 
     def _dot(self, ok):
         dot = Gtk.Box()
