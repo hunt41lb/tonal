@@ -82,17 +82,9 @@ class TonalWindow(Adw.ApplicationWindow):
         outer.append(self.stack)
 
         css = Gtk.CssProvider()
-        css.load_from_string("""
-            .monospace   { font-family: monospace; font-size: 12px; }
-            .heading     { font-weight: bold; font-size: 14px; }
-            .caption     { font-size: 11px; }
-            .dot-ok      { background: #1D9E75; border-radius: 50%; min-width: 10px; min-height: 10px; }
-            .dot-err     { background: #E24B4A; border-radius: 50%; min-width: 10px; min-height: 10px; }
-            .eq-band-col { border-right: 1px solid alpha(currentColor, 0.08); padding: 4px 2px; }
-            .eq-type-dd  { font-size: 10px; }
-            .switch-off:not(:checked) slider { background: #E24B4A; }
-            .switch-off:not(:checked) { background: alpha(#E24B4A, 0.3); }
-        """)
+        css_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "style.css")
+        css.load_from_path(css_path)
+
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
