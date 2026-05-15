@@ -10,54 +10,11 @@ from gi.repository import Gtk, Adw, Gdk, Gio, GLib
 from eq_math import find_peak, FILTER_TYPES, FILTER_SHORT
 from eq_import_export import import_profile, export_apo, export_easyeffects
 from state import get_active_bands, get_active_preamp, save_profile_bands
+from widgets.helpers import block_scroll, icon_button
 from widgets.eq_sliders import EqVerticalSliders
 from vu_meter import VuMeter
 
 log = logging.getLogger("tonal.eq")
-
-# Resolve icon directory once at import time
-_ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
-                          "data", "icons", "scalable", "actions")
-
-
-def _icon_button(icon_name, tooltip, css_classes=None):
-    """Create a button with a custom SVG icon, recolored to match the current theme."""
-    from gi.repository import GdkPixbuf
-
-    css = css_classes or ["flat"]
-    path = os.path.join(_ICON_DIR, f"{icon_name}.svg")
-    if os.path.exists(path):
-        # Detect light/dark theme
-        style_manager = Adw.StyleManager.get_default()
-        fg_color = "#ffffff" if style_manager.get_dark() else "#000000"
-
-        # Read SVG and replace stroke color to match theme
-        with open(path, "r") as f:
-            svg_data = f.read()
-        svg_data = svg_data.replace('stroke="#000000"', f'stroke="{fg_color}"')
-
-        # Load SVG from string via GdkPixbuf
-        loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
-        loader.set_size(16, 16)
-        loader.write(svg_data.encode("utf-8"))
-        loader.close()
-        pixbuf = loader.get_pixbuf()
-        texture = Gdk.Texture.new_for_pixbuf(pixbuf)
-        image = Gtk.Image.new_from_paintable(texture)
-        image.set_pixel_size(16)
-        btn = Gtk.Button(child=image, tooltip_text=tooltip, css_classes=css)
-    else:
-        btn = Gtk.Button(icon_name="image-missing-symbolic", tooltip_text=tooltip, css_classes=css)
-        log.warning("Custom icon not found: %s", path)
-    return btn
-
-
-def _add_scroll_block(w):
-    c = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.VERTICAL)
-    c.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-    c.connect("scroll", lambda *a: True)
-    w.add_controller(c)
-
 
 class EqualizerPage(Gtk.Box):
     def __init__(self, state, toast_overlay, mark_dirty, mark_clean=None):
@@ -98,24 +55,24 @@ class EqualizerPage(Gtk.Box):
         # Profile management buttons
         bb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4, valign=Gtk.Align.END)
 
-        new_btn = _icon_button("tonal-profile-new-symbolic", "New profile")
+        new_btn = icon_button("tonal-profile-new-symbolic", "New profile")
         new_btn.connect("clicked", self._on_new_profile)
         bb.append(new_btn)
 
-        save_btn = _icon_button("tonal-profile-save-symbolic", "Save profile as...")
+        save_btn = icon_button("tonal-profile-save-symbolic", "Save profile as...")
         save_btn.connect("clicked", self._on_save_profile)
         bb.append(save_btn)
 
-        undo_btn = _icon_button("tonal-profile-clear-symbolic", "Undo changes")
+        undo_btn = icon_button("tonal-profile-clear-symbolic", "Undo changes")
         undo_btn.connect("clicked", self._on_undo)
         bb.append(undo_btn)
 
-        import_btn = _icon_button("tonal-profile-import-symbolic",
+        import_btn = icon_button("tonal-profile-import-symbolic",
                                    "Import EQ profile (.txt / .json / .peace)")
         import_btn.connect("clicked", self._on_import_profile)
         bb.append(import_btn)
 
-        export_btn = _icon_button("tonal-profile-export-symbolic", "Export current profile")
+        export_btn = icon_button("tonal-profile-export-symbolic", "Export current profile")
         export_btn.connect("clicked", self._on_export_profile)
         bb.append(export_btn)
 
@@ -178,7 +135,7 @@ class EqualizerPage(Gtk.Box):
 
             # Delete button (red on hover via .profile-delete-btn CSS)
             if can_delete:
-                del_btn = _icon_button("tonal-profile-delete-symbolic",
+                del_btn = icon_button("tonal-profile-delete-symbolic",
                                         f'Delete "{name}"',
                                         css_classes=["flat", "profile-delete-btn"])
                 del_btn.connect("clicked",
@@ -206,7 +163,7 @@ class EqualizerPage(Gtk.Box):
         self.pa_scale.set_draw_value(False)
         self.pa_scale.add_mark(0, Gtk.PositionType.BOTTOM, None)
         self.pa_scale.connect("value-changed", self._on_preamp)
-        _add_scroll_block(self.pa_scale)
+        block_scroll(self.pa_scale)
         h.append(self.pa_scale)
         self.pa_label = Gtk.Label(label=f"{self.preamp_db:+.1f} dB", width_chars=14, xalign=1.0,
                                    css_classes=["monospace", "caption", "dim-label"])
