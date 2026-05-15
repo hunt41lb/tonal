@@ -2,75 +2,9 @@
 
 import os
 
-from gi.repository import Gtk, Adw, Gdk, GdkPixbuf
-from eq_math import FILTER_TYPES, FILTER_LABELS
-
-
-def _block_scroll(_c, _dx, _dy):
-    return True
-
-def _add_scroll_block(w):
-    c = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.VERTICAL)
-    c.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-    c.connect("scroll", _block_scroll)
-    w.add_controller(c)
-
-
-# ── Icon loading ────────────────────────────────────────────────────────────
-
-_ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
-                          "data", "icons", "scalable", "actions")
-
-# Map internal filter type to SVG icon filename
-_FILTER_ICON_NAMES = {
-    "peak": "tonal-peak-filter-symbolic",
-    "lowshelf": "tonal-low-shelf-filter-symbolic",
-    "highshelf": "tonal-high-shelf-filter-symbolic",
-    "lowpass": "tonal-low-pass-filter-symbolic",
-    "highpass": "tonal-high-pass-filter-symbolic",
-    "bandpass": "tonal-band-pass-filter-symbolic",
-    "notch": "tonal-notch-filter-symbolic",
-    "allpass": "tonal-all-pass-filter-symbolic",
-}
-
-# Full display names for the popover
-_FILTER_FULL_NAMES = {
-    "peak": "Peak Filter",
-    "lowshelf": "Low Shelf Filter",
-    "highshelf": "High Shelf Filter",
-    "lowpass": "Low Pass Filter",
-    "highpass": "High Pass Filter",
-    "bandpass": "Band Pass Filter",
-    "notch": "Notch Filter",
-    "allpass": "All Pass Filter",
-}
-
-
-def _load_filter_icon(filter_type, size=24):
-    """Load a filter icon SVG, recolored for the current theme."""
-    icon_name = _FILTER_ICON_NAMES.get(filter_type, "tonal-peak-filter-symbolic")
-    path = os.path.join(_ICON_DIR, f"{icon_name}.svg")
-    if not os.path.exists(path):
-        return Gtk.Image.new_from_icon_name("image-missing-symbolic")
-
-    style_manager = Adw.StyleManager.get_default()
-    fg_color = "#ffffff" if style_manager.get_dark() else "#000000"
-
-    with open(path, "r") as f:
-        svg_data = f.read()
-    # Handle both possible source formats
-    svg_data = svg_data.replace('stroke="currentColor"', f'stroke="{fg_color}"')
-    svg_data = svg_data.replace('stroke="#000000"', f'stroke="{fg_color}"')
-
-    loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
-    loader.set_size(size, size)
-    loader.write(svg_data.encode("utf-8"))
-    loader.close()
-    pixbuf = loader.get_pixbuf()
-    texture = Gdk.Texture.new_for_pixbuf(pixbuf)
-    image = Gtk.Image.new_from_paintable(texture)
-    image.set_pixel_size(size)
-    return image
+from gi.repository import Gtk, Adw
+from constants import FILTER_TYPES, FILTER_ICON_NAMES, FILTER_FULL_NAMES
+from widgets.helpers import block_scroll, load_themed_svg_icon
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -168,7 +102,7 @@ class EqVerticalSliders(Gtk.Box):
         scale.set_vexpand(True)
         scale.set_draw_value(False)
         scale.add_mark(0, Gtk.PositionType.RIGHT, None)
-        _add_scroll_block(scale)
+        block_scroll(scale)
         col.append(scale)
 
         # ── Gain input ──────────────────────────────────────────────────
@@ -216,10 +150,10 @@ class EqVerticalSliders(Gtk.Box):
     def _build_filter_selector(self, idx, band):
         """Build a MenuButton showing the current filter icon, with a popover for selection."""
         current_type = band["type"]
-        full_name = _FILTER_FULL_NAMES.get(current_type, "Peak Filter")
+        full_name =  FILTER_FULL_NAMES.get(current_type, "Peak Filter")
 
         # Button shows the current filter's icon
-        icon = _load_filter_icon(current_type, size=24)
+        icon = load_themed_svg_icon(FILTER_ICON_NAMES.get(current_type, "tonal-peak-filter-symbolic"), size=24)
         menu_btn = Gtk.MenuButton(
             child=icon,
             css_classes=["flat"],
@@ -234,10 +168,10 @@ class EqVerticalSliders(Gtk.Box):
         for ftype in FILTER_TYPES:
             row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
 
-            row_icon = _load_filter_icon(ftype, size=14)
+            row_icon = load_themed_svg_icon(FILTER_ICON_NAMES.get(ftype, "tonal-peak-filter-symbolic"), size=14)
             row.append(row_icon)
 
-            label = Gtk.Label(label=_FILTER_FULL_NAMES.get(ftype, ftype),
+            label = Gtk.Label(label= FILTER_FULL_NAMES.get(ftype, ftype),
                                xalign=0, hexpand=True)
             row.append(label)
 
@@ -260,9 +194,9 @@ class EqVerticalSliders(Gtk.Box):
         band["type"] = filter_type
 
         # Update the button icon to reflect the new selection
-        new_icon = _load_filter_icon(filter_type, size=24)
+        new_icon = load_themed_svg_icon(FILTER_ICON_NAMES.get(filter_type, "tonal-peak-filter-symbolic"), size=24)
         menu_btn.set_child(new_icon)
-        menu_btn.set_tooltip_text(_FILTER_FULL_NAMES.get(filter_type, filter_type))
+        menu_btn.set_tooltip_text( FILTER_FULL_NAMES.get(filter_type, filter_type))
 
         self._notify_change()
 
