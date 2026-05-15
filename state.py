@@ -166,7 +166,7 @@ def detect_channels(hw):
             channels.append({
                 "name": "Chat",
                 "node": "chat_eq",
-                "target": "usb1_chat",
+                "target": TARGET_USB1_CHAT,
                 "position": ["FL", "FR"],
                 "enabled": True,
                 "is_default": False,
@@ -178,7 +178,7 @@ def detect_channels(hw):
         channels.append({
             "name": "Main",
             "node": "main_eq",
-            "target": "usb1_chat",  # In standard mode, PCM 0 is Main
+            "target": TARGET_USB1_CHAT,
             "position": ["FL", "FR"],
             "enabled": True,
             "is_default": True,
@@ -190,7 +190,7 @@ def detect_channels(hw):
         channels.append({
             "name": "USB 2",
             "node": "usb2_eq",
-            "target": "usb2",
+            "target": TARGET_USB2,
             "position": ["FL", "FR"],
             "enabled": True,
             "is_default": False,
