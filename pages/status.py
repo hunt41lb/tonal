@@ -4,6 +4,7 @@ import threading
 
 from gi.repository import Gtk, Adw, GLib
 from widgets.helpers import scrollable_wrap
+from constants import APP_VERSION
 import pipewire_ctl
 
 
@@ -16,6 +17,13 @@ class StatusPage(Gtk.Box):
                         margin_top=24, margin_bottom=24, margin_start=24, margin_end=24)
         clamp = Adw.Clamp(maximum_size=700); inner.append(clamp)
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16); clamp.set_child(vbox)
+
+        # App version
+        vg = Adw.PreferencesGroup(title="Tonal")
+        vbox.append(vg)
+        vr = Adw.ActionRow(title="Version", subtitle=APP_VERSION)
+        vr.add_prefix(Gtk.Image.new_from_icon_name("application-x-executable-symbolic"))
+        vg.add(vr)
 
         # Hardware
         usb = pipewire_ctl.check_usb_connected()
