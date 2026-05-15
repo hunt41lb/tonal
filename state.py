@@ -5,22 +5,12 @@ import os
 import copy
 import subprocess
 import logging
+from constants import (
+    STATE_DIR, STATE_FILE, EXPANDED_CHANNEL_MAP,
+    TARGET_EXPANDED, TARGET_USB1_CHAT, TARGET_USB2,
+)
 
 log = logging.getLogger("tonal.state")
-
-STATE_DIR = os.path.expanduser("~/.config/tonal")
-STATE_FILE = os.path.join(STATE_DIR, "state.json")
-
-# RODECaster Pro II expanded channel map (hardware-defined, not user-specific)
-# These are the ALSA channel positions for each virtual device when Expanded mode is active.
-EXPANDED_CHANNEL_MAP = [
-    {"device_name": "System",  "position": ["FL", "FR"],   "target": "rodecaster_expanded"},
-    {"device_name": "Game",    "position": ["FC", "LFE"],  "target": "rodecaster_expanded"},
-    {"device_name": "Music",   "position": ["RL", "RR"],   "target": "rodecaster_expanded"},
-    {"device_name": "A",       "position": ["FLC", "FRC"], "target": "rodecaster_expanded"},
-    {"device_name": "B",       "position": ["RC", "SL"],   "target": "rodecaster_expanded"},
-]
-
 
 def load_state():
     """Load state from disk, then always refresh hardware detection."""
