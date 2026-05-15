@@ -1,0 +1,57 @@
+/* Tonal — Application Stylesheet
+ *
+ * Previously embedded as a string literal in tonal.py TonalWindow.__init__().
+ * Loaded at startup via Gtk.CssProvider.load_from_path().
+ */
+
+/* Monospace text (stream IDs, node names, debug info) */
+.monospace {
+    font-family: monospace;
+    font-size: 12px;
+}
+
+/* Section headings within pages */
+.heading {
+    font-weight: bold;
+    font-size: 14px;
+}
+
+/* Small annotation text (EQ values, labels) */
+.caption {
+    font-size: 11px;
+}
+
+/* Status indicator dots */
+.dot-ok {
+    background: #1D9E75;
+    border-radius: 50%;
+    min-width: 10px;
+    min-height: 10px;
+}
+
+.dot-err {
+    background: #E24B4A;
+    border-radius: 50%;
+    min-width: 10px;
+    min-height: 10px;
+}
+
+/* EQ band column dividers */
+.eq-band-col {
+    border-right: 1px solid alpha(currentColor, 0.08);
+    padding: 4px 2px;
+}
+
+/* Compact filter type dropdown text */
+.eq-type-dd {
+    font-size: 10px;
+}
+
+/* Red-tinted switch for "off" state (e.g. channel disabled) */
+.switch-off:not(:checked) slider {
+    background: #E24B4A;
+}
+
+.switch-off:not(:checked) {
+    background: alpha(#E24B4A, 0.3);
+}
