@@ -7,7 +7,7 @@ import os
 
 from gi.repository import Gtk, Adw, Gdk, Gio, GLib
 
-from eq_math import find_peak, FILTER_TYPES, FILTER_SHORT
+from eq_math import find_peak
 from eq_import_export import import_profile, export_apo, export_easyeffects
 from state import get_active_bands, get_active_preamp, save_profile_bands
 from widgets.helpers import block_scroll, icon_button
