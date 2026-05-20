@@ -13,6 +13,7 @@ from state import get_active_bands, get_active_preamp, save_profile_bands
 from widgets.helpers import block_scroll, icon_button
 from widgets.eq_sliders import EqVerticalSliders
 from vu_meter import VuMeter
+from widgets.spectrum_analyzer import SpectrumAnalyzer
 
 log = logging.getLogger("tonal.eq")
 
@@ -41,6 +42,7 @@ class EqualizerPage(Gtk.Box):
         self._build_top_bar()
         self._build_preamp()
         self._build_peak_meter()
+        self._build_spectrum()
         self._build_sliders()
         self._update_peak_meter()
 
@@ -187,6 +189,11 @@ class EqualizerPage(Gtk.Box):
                                           on_delete=self._on_delete_request)
         self.slider_scroll.set_child(self.sliders)
         self.vbox.append(self.slider_scroll)
+
+    def _build_spectrum(self):
+        """Build real-time spectrum analyzer."""
+        self.spectrum = SpectrumAnalyzer()
+        self.vbox.append(self.spectrum)
 
     # ── Public methods for window to call before apply ──────────────────────
 
