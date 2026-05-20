@@ -3,7 +3,7 @@
 # Usage: ./build-deb.sh
 set -e
 
-VERSION="1.0.3"
+VERSION="1.0.4-u1"
 PKG_NAME="tonal"
 PKG_DIR="build/${PKG_NAME}_${VERSION}_all"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -87,6 +87,7 @@ cp "${SCRIPT_DIR}/pages/status.py"     "${APP_DIR}/pages/"
 cp "${SCRIPT_DIR}/widgets/__init__.py"    "${APP_DIR}/widgets/"
 cp "${SCRIPT_DIR}/widgets/eq_sliders.py"  "${APP_DIR}/widgets/"
 cp "${SCRIPT_DIR}/widgets/helpers.py"     "${APP_DIR}/widgets/"
+cp "${SCRIPT_DIR}/widgets/spectrum_analyzer.py"  "${APP_DIR}/widgets/"
 
 # Data (stylesheet)
 cp "${SCRIPT_DIR}/data/style.css"      "${APP_DIR}/data/"
