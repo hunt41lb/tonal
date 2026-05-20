@@ -1,10 +1,42 @@
-tonal (1.0.0-1) unstable; urgency=medium
+# Tonal — Changelog
 
-  * Initial release
-  * Multi-channel PipeWire routing for RODECaster Pro II
-  * Parametric EQ with profile management and live updates
-  * Per-application audio routing rules
-  * Hardware auto-detection (USB 1 Expanded/Standard, USB 2)
-  * App discovery for automatic routing rule creation
+## v1.0.4 — Spectrum Analyzer
 
- -- Thomas Hunt <hunt41lb@github.com>  Sun, 11 May 2025 12:00:00 -0400
+- Added real-time spectrum analyzer to the Equalizer page (GStreamer-based)
+- 512-point FFT mapped to 31-band 1/3 octave display (ISO center frequencies)
+- Peak hold markers with configurable hold time and decay
+- Smooth bar animation with instant rise and gradual falloff
+- Automatic start/stop lifecycle tied to application window
+- Graceful degradation when GStreamer is unavailable
+- Dark/light theme support matching existing VU meter style
+
+## v1.0.3 — Version Display
+
+- Added application version display to the Status page
+- Version sourced from constants.py for single-source-of-truth consistency
+
+## v1.0.2 — Phase 1 Refactor
+
+- Centralized shared constants into constants.py (channel targets, file paths, filter types, sample rate)
+- Extracted duplicated helpers into widgets/helpers.py (scrollable_wrap, block_scroll, load_themed_svg_icon, icon_button)
+- Moved inline CSS from tonal.py to data/style.css
+- Replaced magic strings with named constants across all modules
+- Updated build script to include new files
+
+## v1.0.1 — Bug Fixes
+
+- Bug fixes and minor improvements
+
+## v1.0.0 — Initial Release
+
+- Multi-channel PipeWire routing for RODECaster Pro II (Expanded/Standard/USB 2)
+- Parametric EQ with unlimited bands and 8 filter types
+- Profile management (save, switch, delete, auto-backup)
+- Import from EasyEffects JSON and Peace profiles
+- Export to EqualizerAPO and EasyEffects formats
+- Per-application audio routing rules with app discovery
+- Real-time VU meter with peak hold and EQ peak overlay
+- Live EQ updates without PipeWire restart
+- Hardware auto-detection (USB 1 Expanded/Standard, USB 2)
+- Zero Python package dependencies
+- .deb package with desktop integration
