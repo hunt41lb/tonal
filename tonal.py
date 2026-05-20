@@ -161,6 +161,9 @@ class TonalWindow(Adw.ApplicationWindow):
         # Stop VU meter monitoring before closing
         if hasattr(self.eq_page, 'vu_meter'):
             self.eq_page.vu_meter.cleanup()
+        
+        if hasattr(self.eq_page, 'spectrum'):
+            self.eq_page.spectrum.cleanup()
 
         if self.pending_changes:
             dialog = Adw.AlertDialog(
