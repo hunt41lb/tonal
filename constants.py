@@ -112,4 +112,4 @@ TYPE_TO_PIPEWIRE = {
 
 # ── Application ─────────────────────────────────────────────────────────────
 
-APP_VERSION = "1.0.4-u1"
+APP_VERSION = "1.0.4-u2"
