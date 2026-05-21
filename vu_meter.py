@@ -17,6 +17,9 @@ METER_RANGE = METER_MAX_DB - METER_MIN_DB
 FALLOFF_DB_PER_FRAME = 1.2
 PEAK_HOLD_FRAMES = 60
 
+# Gradient base color (teal — matches spectrum analyzer)
+BASE_R, BASE_G, BASE_B = 0.11, 0.62, 0.46
+
 
 def _db_from_sample(peak_value):
     if peak_value < 1e-10:
@@ -125,11 +128,19 @@ class _SourceMonitor:
         self.running = False
 
 
-class VuMeter(Gtk.Box):
-    """Real-time VU meter monitoring all PipeWire hardware outputs."""
+class VuMeter(Gtk.DrawingArea):
+    """Real-time VU meter monitoring all PipeWire hardware outputs.
+
+    Renders as a single DrawingArea — no side labels.
+    Peak info is drawn directly on the canvas.
+    """
 
     def __init__(self, eq_peak_db=0.0):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        super().__init__()
+
+        self.set_hexpand(True)
+        self.set_content_height(16)
+        self.set_draw_func(self._draw_meter)
 
         self._display_db = METER_MIN_DB
         self._peak_hold_db = METER_MIN_DB
@@ -137,29 +148,6 @@ class VuMeter(Gtk.Box):
         self._eq_peak_db = eq_peak_db
         self._monitors = []
         self._timer_id = None
-
-        # ── Meter row ───────────────────────────────────────────────────
-        meter_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        meter_row.append(Gtk.Label(label="Level", width_chars=7, xalign=1.0,
-                                    css_classes=["dim-label"]))
-
-        # Drawing area in a frame — margins match GTK Scale's internal handle padding
-        frame = Gtk.Frame(css_classes=["view"],
-                           margin_start=10, margin_end=10)
-        self._drawing_area = Gtk.DrawingArea()
-        self._drawing_area.set_hexpand(True)
-        self._drawing_area.set_content_height(14)
-        self._drawing_area.set_draw_func(self._draw_meter)
-        frame.set_child(self._drawing_area)
-        meter_row.append(frame)
-
-        # Peak hold value only
-        self._peak_label = Gtk.Label(label="Peak: —", width_chars=14, xalign=1.0,
-                                      css_classes=["monospace", "caption", "dim-label"],
-                                      tooltip_text="Highest peak detected")
-        meter_row.append(self._peak_label)
-
-        self.append(meter_row)
 
         # Auto-start
         GLib.idle_add(self._auto_start)
@@ -171,14 +159,13 @@ class VuMeter(Gtk.Box):
     def set_eq_peak(self, db):
         """Update the theoretical EQ peak marker."""
         self._eq_peak_db = db
-        self._drawing_area.queue_draw()
+        self.queue_draw()
 
     def reset_peak(self):
         """Reset the peak hold — call on profile save/switch/undo."""
         self._peak_hold_db = METER_MIN_DB
         self._peak_hold_countdown = 0
-        self._peak_label.set_text("Peak: —")
-        self._drawing_area.queue_draw()
+        self.queue_draw()
 
     def start_monitoring(self):
         if self._monitors:
@@ -197,7 +184,7 @@ class VuMeter(Gtk.Box):
             GLib.source_remove(self._timer_id)
             self._timer_id = None
         self._display_db = METER_MIN_DB
-        self._drawing_area.queue_draw()
+        self.queue_draw()
 
     def cleanup(self):
         self.stop_monitoring()
@@ -220,19 +207,20 @@ class VuMeter(Gtk.Box):
         if raw_db > self._peak_hold_db:
             self._peak_hold_db = raw_db
             self._peak_hold_countdown = PEAK_HOLD_FRAMES
-            # Update peak label only when new peak is set
-            self._peak_label.set_text(f"Peak: {self._peak_hold_db:+.1f} dB")
         elif self._peak_hold_countdown > 0:
             self._peak_hold_countdown -= 1
         else:
             self._peak_hold_db = max(raw_db, self._peak_hold_db - 0.3)
 
-        self._drawing_area.queue_draw()
+        self.queue_draw()
         return True
 
     # ── Drawing ─────────────────────────────────────────────────────────
 
     def _draw_meter(self, area, cr, width, height):
+        if width < 10 or height < 4:
+            return
+
         # Rounded clip region
         radius = 3
         cr.new_sub_path()
@@ -248,33 +236,22 @@ class VuMeter(Gtk.Box):
         cr.rectangle(0, 0, width, height)
         cr.fill()
 
-        # Level bar segments
+        # Level bar with gradient (teal → white based on level)
         level_frac = _db_to_fraction(self._display_db)
         bar_width = level_frac * width
 
         if bar_width > 1:
-            green_x = _db_to_fraction(-6.0) * width
-            yellow_x = _db_to_fraction(0.0) * width
-
-            # Green
-            seg_end = min(bar_width, green_x)
-            if seg_end > 0:
-                cr.set_source_rgb(0.11, 0.62, 0.46)
-                cr.rectangle(0, 0, seg_end, height)
-                cr.fill()
-
-            # Yellow
-            if bar_width > green_x:
-                seg_w = min(bar_width, yellow_x) - green_x
-                if seg_w > 0:
-                    cr.set_source_rgb(0.91, 0.66, 0.22)
-                    cr.rectangle(green_x, 0, seg_w, height)
-                    cr.fill()
-
-            # Red
-            if bar_width > yellow_x:
-                cr.set_source_rgb(0.89, 0.29, 0.29)
-                cr.rectangle(yellow_x, 0, bar_width - yellow_x, height)
+            # Draw gradient segments across the bar
+            num_segments = max(1, int(bar_width))
+            seg_w = bar_width / num_segments
+            for i in range(num_segments):
+                seg_frac = (i + 0.5) / (width if width > 0 else 1)
+                r = BASE_R + (1.0 - BASE_R) * seg_frac
+                g = BASE_G + (1.0 - BASE_G) * seg_frac
+                b = BASE_B + (1.0 - BASE_B) * seg_frac
+                alpha = 0.5 + seg_frac * 0.4
+                cr.set_source_rgba(r, g, b, alpha)
+                cr.rectangle(i * seg_w, 0, seg_w + 0.5, height)
                 cr.fill()
 
         # 0 dB reference
@@ -288,20 +265,29 @@ class VuMeter(Gtk.Box):
         # Peak hold marker
         if self._peak_hold_db > METER_MIN_DB + 1:
             peak_x = _db_to_fraction(self._peak_hold_db) * width
-            cr.set_source_rgba(0.95, 0.2, 0.2, 0.9)
+            cr.set_source_rgba(0.94, 0.59, 0.59, 0.9)
             cr.set_line_width(2.0)
             cr.move_to(peak_x, 0)
             cr.line_to(peak_x, height)
             cr.stroke()
 
-        # EQ peak marker
-        if self._eq_peak_db > METER_MIN_DB + 1:
-            eq_x = _db_to_fraction(self._eq_peak_db) * width
-            cr.set_source_rgba(0.3, 0.7, 1.0, 0.7)
-            cr.set_line_width(1.5)
-            cr.move_to(eq_x, 0)
-            cr.line_to(eq_x, height)
-            cr.stroke()
+        # Peak text overlay (top-right, fixed position)
+        cr.select_font_face("monospace", 0, 0)
+        cr.set_font_size(9)
+        if self._peak_hold_db > METER_MIN_DB + 1:
+            peak_text = f"Peak: {self._peak_hold_db:+.1f} dB"
+        else:
+            peak_text = "Peak: —"
+        extents = cr.text_extents(peak_text)
+        tx = width - extents.width - 6
+        ty = height / 2 + extents.height / 2
+        # Text shadow for readability
+        cr.set_source_rgba(0, 0, 0, 0.6)
+        cr.move_to(tx + 0.5, ty + 0.5)
+        cr.show_text(peak_text)
+        cr.set_source_rgba(1, 1, 1, 0.6)
+        cr.move_to(tx, ty)
+        cr.show_text(peak_text)
 
         # Subtle scale ticks
         cr.set_source_rgba(1.0, 1.0, 1.0, 0.1)
