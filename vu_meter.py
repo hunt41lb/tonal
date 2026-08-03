@@ -32,8 +32,12 @@ def _db_to_fraction(db):
 
 
 def _find_all_hardware_monitors():
-    """Find all hardware output monitors for combined audio capture."""
-    monitors = []
+    """Find the primary hardware output monitor for audio capture.
+
+    Only monitors rodecaster_expanded (the combined 10-channel output)
+    to avoid creating multiple capture streams that can cause PipeWire dropouts.
+    Falls back to default monitor if expanded node is not found.
+    """
     try:
         r = subprocess.run(["pactl", "list", "sinks", "short"],
                            capture_output=True, text=True, timeout=3)
@@ -45,29 +49,23 @@ def _find_all_hardware_monitors():
             if len(parts) < 4:
                 continue
             name = parts[1].strip()
-            fmt_str = parts[3].strip()
-
-            channels = 2
-            for token in fmt_str.split():
-                if token.endswith("ch"):
-                    try:
-                        channels = int(token[:-2])
-                    except ValueError:
-                        pass
-
             if name == "rodecaster_expanded":
-                monitors.append((f"{name}.monitor", channels))
-            elif ("RODECaster" in name or "R__DECaster" in name) and "alsa_output" in name:
-                monitors.append((f"{name}.monitor", channels))
+                fmt_str = parts[3].strip()
+                channels = 2
+                for token in fmt_str.split():
+                    if token.endswith("ch"):
+                        try:
+                            channels = int(token[:-2])
+                        except ValueError:
+                            pass
+                log.info("VU meter: monitoring %s (%dch)", name, channels)
+                return [(f"{name}.monitor", channels)]
 
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
 
-    if not monitors:
-        return [("@DEFAULT_MONITOR@", 2)]
-
-    log.info("VU meter: monitoring %d output(s)", len(monitors))
-    return monitors
+    log.info("VU meter: expanded node not found, using default monitor")
+    return [("@DEFAULT_MONITOR@", 2)]
 
 
 class _SourceMonitor:
