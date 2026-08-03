@@ -6,6 +6,8 @@ import time
 import logging
 import threading
 
+from constants import TARGET_EXPANDED
+
 log = logging.getLogger("tonal.pipewire")
 
 
@@ -111,12 +113,30 @@ def is_service_running(service):
     return ok
 
 
-def get_pipewire_nodes():
-    target = ["rodecaster_expanded", "system_eq", "gaming_eq", "music_eq", "voicechat_eq", "webbrowsers_eq"]
+def get_pipewire_nodes(state=None):
+    """Report status for the PipeWire nodes Tonal actually manages.
+
+    The node names are read live from the current channel configuration in
+    `state` — never hardcoded — so the Status page always reflects the channels
+    that were really generated (system_eq, game_eq, chat_eq, ...) rather than a
+    stale wishlist. The shared expanded ALSA adapter is included whenever any
+    enabled channel routes through it.
+    """
+    channels = (state or {}).get("channels", [])
+    targets = []
+    if any(ch.get("target") == TARGET_EXPANDED for ch in channels if ch.get("enabled")):
+        targets.append(TARGET_EXPANDED)
+    targets.extend(ch["node"] for ch in channels if ch.get("enabled"))
+
+    if not targets:
+        # No configured channels yet (device not detected) — keep the row list
+        # non-empty so the page renders, but don't invent channel names.
+        targets = [TARGET_EXPANDED]
+
     ok, out = _run(["pw-cli", "list-objects", "Node"])
     if not ok:
-        return [{"name": n, "status": "unknown"} for n in target]
-    return [{"name": n, "status": "running" if f'"{n}"' in out else "missing"} for n in target]
+        return [{"name": n, "status": "unknown"} for n in targets]
+    return [{"name": n, "status": "running" if f'"{n}"' in out else "missing"} for n in targets]
 
 
 def check_usb_connected():
@@ -240,6 +260,34 @@ def apply_eq_live(state):
         return True, f"EQ updated on {updated} node(s), {failed} failed"
     else:
         return True, f"EQ updated live on {updated} channel(s) — no restart needed"
+
+def ensure_expanded_ready(state):
+    """Recover from the boot-time race where PipeWire starts before the RODECaster's
+    USB card is enumerated.
+
+    Symptom (seen in the journal): 'hw:...,1 playback open failed: No such device'
+    → the filter-chain daemon exits and the expanded adapter never appears until a
+    manual audio-server restart. If an expanded channel is configured and its ALSA
+    card is now present but the 'rodecaster_expanded' node is missing, restart
+    PipeWire ONCE to bring it up. No-ops on a healthy launch.
+    """
+    hw = state.get("hardware", {})
+    needs_expanded = any(ch.get("target") == TARGET_EXPANDED
+                         for ch in state.get("channels", []) if ch.get("enabled"))
+    if not needs_expanded or not hw.get("usb1_detected"):
+        return False, "no expanded channel or card not present"
+
+    ok, out = _run(["pw-cli", "list-objects", "Node"], timeout=3)
+    if ok and '"rodecaster_expanded"' in out:
+        return False, "expanded adapter already running"
+
+    log.warning("Expanded adapter missing though card is present — "
+                "restarting PipeWire to recover from boot-time race")
+    restart_pipewire()
+    time.sleep(1.0)
+    recovered = _wait_for_nodes(["rodecaster_expanded"], timeout=6)
+    return recovered, ("recovered" if recovered else "restart did not bring up adapter")
+
 
 def apply_config(state, default_node="system_eq"):
     """Full apply: save → write → restart → wait for nodes → set default → background re-route."""
