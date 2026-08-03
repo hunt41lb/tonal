@@ -6,7 +6,7 @@ import copy
 import subprocess
 import logging
 from constants import (
-    STATE_DIR, STATE_FILE, EXPANDED_CHANNEL_MAP,
+    STATE_DIR, STATE_FILE, EXPANDED_CHANNEL_MAP, DEFAULT_EQ_BANDS,
     TARGET_EXPANDED, TARGET_USB1_CHAT, TARGET_USB2,
 )
 
@@ -30,11 +30,26 @@ def load_state():
         save_state(state)
         return state
 
+    # Migrate older saved states (e.g. an empty Default profile) up to current
+    # expectations before using them.
+    _migrate_state(state)
+
     # Always refresh hardware detection so status is current
     hw = detect_hardware()
     state["hardware"] = hw
     log.info("Hardware detection refreshed")
     return state
+
+
+def _migrate_state(state):
+    """In-place upgrades for states saved by earlier versions."""
+    # Seed the Default profile with flat bands if it was saved empty, so the
+    # user always has 7 sliders ready to move instead of a blank EQ.
+    profiles = state.get("eq", {}).get("profiles", {})
+    default = profiles.get("Default")
+    if default is not None and not default.get("bands"):
+        default["bands"] = copy.deepcopy(DEFAULT_EQ_BANDS)
+        log.info("Migrated empty 'Default' profile → %d flat bands", len(DEFAULT_EQ_BANDS))
 
 
 def save_state(state):
@@ -60,7 +75,7 @@ def build_state_from_hardware():
             "profiles": {
                 "Default": {
                     "preamp_db": 0.0,
-                    "bands": [],
+                    "bands": copy.deepcopy(DEFAULT_EQ_BANDS),
                 },
             },
         },
@@ -141,6 +156,23 @@ def detect_hardware():
         log.warning("Could not query PipeWire nodes")
 
     return hw
+
+
+def hardware_fingerprint():
+    """A signature of the RODECaster-relevant ALSA topology.
+
+    Captures each RODECaster card line from /proc/asound/cards, including its
+    index and USB path, so the signature changes when a RODECaster connection is
+    added, removed, or re-enumerated on a different USB port. Callers poll this
+    to detect hotplug/port-move events without a restart.
+    """
+    try:
+        with open("/proc/asound/cards", "r") as f:
+            text = f.read()
+    except IOError:
+        return ""
+    return "\n".join(line.strip() for line in text.split("\n")
+                     if "CASTER" in line.upper())
 
 
 def detect_channels(hw):
