@@ -5,6 +5,8 @@ import re
 import os
 import logging
 
+from eq_math import clamp_bands
+
 log = logging.getLogger("tonal.import_export")
 
 # ── EqualizerAPO type mappings ──────────────────────────────────────────────
@@ -107,13 +109,24 @@ def import_profile(path):
     """
     fmt = detect_format(path)
     if fmt == "apo":
-        return _import_apo(path)
+        preamp_db, bands, err = _import_apo(path)
     elif fmt == "peace":
-        return _import_peace(path)
+        preamp_db, bands, err = _import_peace(path)
     elif fmt == "easyeffects":
-        return _import_easyeffects(path)
+        preamp_db, bands, err = _import_easyeffects(path)
     else:
         return None, None, f"Unrecognized file format: {os.path.basename(path)}"
+
+    if err:
+        return None, None, err
+
+    # Clamp every imported band into the safe audible range. This is the gap that
+    # let sub-20 Hz AutoEQ bands through and stalled the RT thread on some CPUs.
+    clamped = clamp_bands(bands)
+    adjusted = sum(1 for a, b in zip(bands, clamped) if a.get("freq") != b.get("freq"))
+    if adjusted:
+        log.info("Clamped %d imported band(s) into the %s safe range", adjusted, "20–20000 Hz")
+    return preamp_db, clamped, None
 
 
 def _import_apo(path):
