@@ -3,7 +3,10 @@
 import os
 
 from gi.repository import Gtk, Adw
-from constants import FILTER_TYPES, FILTER_ICON_NAMES, FILTER_FULL_NAMES
+from constants import (
+    FILTER_TYPES, FILTER_ICON_NAMES, FILTER_FULL_NAMES,
+    MIN_BAND_FREQ, MAX_BAND_FREQ,
+)
 from widgets.helpers import block_scroll, load_themed_svg_icon
 
 
@@ -205,7 +208,7 @@ class EqVerticalSliders(Gtk.Box):
     def _freq_committed(self, entry, band):
         parsed = _parse_freq(entry.get_text())
         if parsed is not None:
-            parsed = max(20.0, min(20000.0, parsed))
+            parsed = max(MIN_BAND_FREQ, min(MAX_BAND_FREQ, parsed))
             band["freq"] = round(parsed, 1)
             self._notify_change()
         # Always reset display to canonical format
