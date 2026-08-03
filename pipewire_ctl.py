@@ -7,6 +7,7 @@ import logging
 import threading
 
 from constants import TARGET_EXPANDED
+from eq_math import clamp_bands
 
 log = logging.getLogger("tonal.pipewire")
 
@@ -220,7 +221,9 @@ def apply_eq_live(state):
 
     eq = state["eq"]
     profile = eq["profiles"].get(eq["active_profile"], {})
-    profile_bands = profile.get("bands", [])
+    # Clamp before pushing to running nodes — a live Freq update could otherwise
+    # drive a band below the safe floor. See constants.MIN_BAND_FREQ.
+    profile_bands = clamp_bands(profile.get("bands", []))
 
     if eq["enabled"]:
         preamp_db = profile.get("preamp_db", 0.0)
