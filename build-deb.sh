@@ -3,7 +3,7 @@
 # Usage: ./build-deb.sh
 set -e
 
-VERSION="1.0.4-u3"
+VERSION="1.0.4-u4"
 PKG_NAME="tonal"
 PKG_DIR="build/${PKG_NAME}_${VERSION}_all"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
