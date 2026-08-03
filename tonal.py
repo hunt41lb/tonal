@@ -25,7 +25,7 @@ except (ImportError, ValueError) as e:
     print("Install: sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1")
     sys.exit(1)
 
-from state import load_state, backup_profile_before_apply
+from state import load_state, backup_profile_before_apply, detect_hardware, hardware_fingerprint
 from pages.channels import ChannelsPage
 from pages.equalizer import EqualizerPage
 from pages.routing import RoutingPage
@@ -90,7 +90,40 @@ class TonalWindow(Adw.ApplicationWindow):
         )
 
         self.connect("close-request", self._on_close_request)
+
+        # Boot-race recovery + live hotplug detection for the RODECaster
+        self._start_hardware_watch()
+
         log.info("Window ready")
+
+    # ── Hardware watching ────────────────────────────────────────────────────
+
+    def _start_hardware_watch(self):
+        """Recover the expanded adapter if the boot race ate it, then poll for
+        USB port moves / (un)plugs so a hardware change is caught live instead of
+        only at the next app launch."""
+        self._hw_fingerprint = hardware_fingerprint()
+        threading.Thread(target=self._boot_recovery, daemon=True).start()
+        # 3s cadence is cheap (just reads /proc/asound/cards) and responsive enough
+        GLib.timeout_add_seconds(3, self._check_hardware_change)
+
+    def _boot_recovery(self):
+        ok, msg = pipewire_ctl.ensure_expanded_ready(self.state)
+        if ok:
+            GLib.idle_add(lambda: self.toast_overlay.add_toast(
+                Adw.Toast(title="Recovered RODECaster expanded output", timeout=3)))
+
+    def _check_hardware_change(self):
+        fp = hardware_fingerprint()
+        if fp != self._hw_fingerprint:
+            self._hw_fingerprint = fp
+            log.info("RODECaster hardware topology changed — re-detecting")
+            self.state["hardware"] = detect_hardware()
+            self.mark_dirty(requires_restart=True)
+            self.toast_overlay.add_toast(Adw.Toast(
+                title="RODECaster hardware changed — Save & Apply to update routing",
+                timeout=5))
+        return True  # keep the poll alive
 
     def mark_dirty(self, requires_restart=False):
         """Called by pages. EQ changes don't require restart; structural changes do."""
