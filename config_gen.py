@@ -95,7 +95,16 @@ def generate_routing_conf(state):
         f"",
     ]
 
-    if has_expanded and hw.get("usb1_alsa_name"):
+    if has_expanded and (hw.get("usb1_alsa_card") or hw.get("usb1_alsa_name")):
+        # Address the card by its NUMERIC index, not its ALSA id. Both RODECaster
+        # USB connections resolve to the id "II" (the second one becomes "II_1"),
+        # and which connection wins is decided by USB enumeration order — i.e. the
+        # physical port. Using "hw:II,1" therefore binds to whichever device
+        # happened to grab "II" and breaks when cables move between ports. The
+        # numeric index is chosen in state.py by matching the primary descriptor
+        # and its 10-channel stream, so it always follows the right cable. The
+        # hotplug watcher re-detects it if the index shifts.
+        alsa_card = hw.get("usb1_alsa_card") or hw.get("usb1_alsa_name")
         lines.extend([
             f"context.objects = [",
             f"    {{ factory = adapter",
@@ -104,7 +113,7 @@ def generate_routing_conf(state):
             f'            node.name              = "rodecaster_expanded"',
             f'            node.description       = "RODECaster Expanded"',
             f'            media.class            = Audio/Sink',
-            f'            api.alsa.path          = "hw:{hw["usb1_alsa_name"]},1"',
+            f'            api.alsa.path          = "hw:{alsa_card},1"',
             f"            audio.channels         = 10",
             f"            audio.position         = [ FL FR FC LFE RL RR FLC FRC RC SL ]",
             f"            audio.format           = S32LE",
