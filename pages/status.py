@@ -39,7 +39,7 @@ class StatusPage(Gtk.Box):
 
         # Nodes
         ng = Adw.PreferencesGroup(title="PipeWire nodes"); vbox.append(ng)
-        for n in pipewire_ctl.get_pipewire_nodes():
+        for n in pipewire_ctl.get_pipewire_nodes(self.state):
             self._row(ng, n["name"], n["status"].capitalize(), n["status"] == "running")
 
         # Actions
