@@ -245,13 +245,12 @@ class EqualizerPage(Gtk.Box):
     # ── Metering ────────────────────────────────────────────────────────────
 
     def _build_metering(self):
-        """Build combined metering section — VU meter strip + spectrum analyzer."""
         meter_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0,
                              css_classes=["metering-card"])
         self.vu_meter = VuMeter(eq_peak_db=find_peak(self.bands, preamp_db=self.preamp_db))
         meter_box.append(self.vu_meter)
-        self.spectrum = SpectrumAnalyzer()
-        meter_box.append(self.spectrum)
+        # self.spectrum = SpectrumAnalyzer()
+        # meter_box.append(self.spectrum)
         self.vbox.append(meter_box)
 
     def _update_peak_meter(self):
