@@ -7,7 +7,9 @@ import logging
 from constants import (
     PIPEWIRE_CONF_DIR, PULSE_CONF_DIR, ROUTING_CONF, PULSE_CONF,
     TYPE_TO_PIPEWIRE, TARGET_EXPANDED, TARGET_USB1_CHAT, TARGET_USB2,
+    PREAMP_SHELF_FREQ,
 )
+from eq_math import clamp_bands
 
 log = logging.getLogger("tonal.config")
 
@@ -20,7 +22,7 @@ def _backup(path):
 
 def _eq_nodes_and_links(preamp_db, bands):
     nodes = [f'                    {{ type = builtin name = preamp label = bq_highshelf '
-             f'control = {{ "Freq" = 1.0 "Q" = 0.707 "Gain" = {preamp_db} }} }}']
+             f'control = {{ "Freq" = {PREAMP_SHELF_FREQ} "Q" = 0.707 "Gain" = {preamp_db} }} }}']
     links = []
     prev = "preamp"
     for i, band in enumerate(bands):
@@ -81,6 +83,10 @@ def generate_routing_conf(state):
         # node infrastructure stays in place for live EQ updates when re-enabled.
         bands = [{"freq": b["freq"], "q": b["q"], "gain": 0.0, "type": b["type"]}
                  for b in profile["bands"]]
+
+    # Safety net: no biquad below the audible floor ever reaches PipeWire,
+    # whatever the profile source. See constants.MIN_BAND_FREQ.
+    bands = clamp_bands(bands)
 
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
