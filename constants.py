@@ -8,6 +8,19 @@ import os
 SAMPLE_RATE = 48000
 
 
+# ── EQ Safety Limits ────────────────────────────────────────────────────────
+# Biquad filters below ~20 Hz at 48 kHz lose float32 coefficient precision and
+# generate denormal states that can stall PipeWire's real-time thread on some
+# CPUs (observed after an Intel → Ryzen 9000 upgrade: audio played ~1s then
+# dropped for ~20s, RODECaster meter frozen). Every band frequency AND the
+# preamp shelf are clamped into this range before they reach a filter, so no
+# profile — imported, hand-edited, or legacy — can put a biquad below the floor.
+# 20 Hz is the bottom of human hearing and was hardware-verified safe.
+MIN_BAND_FREQ = 20.0
+MAX_BAND_FREQ = 20000.0
+PREAMP_SHELF_FREQ = 20.0
+
+
 # ── Channel Routing Targets ─────────────────────────────────────────────────
 # These identify which physical output a channel routes to.
 # Used in state.py (channel detection), config_gen.py (config writing),
@@ -128,4 +141,4 @@ DEFAULT_EQ_BANDS = [
 
 # ── Application ─────────────────────────────────────────────────────────────
 
-APP_VERSION = "1.0.4-u4"
+APP_VERSION = "1.0.4-u5"
