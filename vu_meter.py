@@ -32,12 +32,15 @@ def _db_to_fraction(db):
 
 
 def _find_all_hardware_monitors():
-    """Find the primary hardware output monitor for audio capture.
+    """Find every RODECaster output monitor so the VU meter reflects all channels.
 
-    Only monitors rodecaster_expanded (the combined 10-channel output)
-    to avoid creating multiple capture streams that can cause PipeWire dropouts.
-    Falls back to default monitor if expanded node is not found.
+    Captures the expanded USB-1 sink AND the raw USB-1 Chat / USB-2 outputs, so
+    audio on any channel — including USB-2 — registers on the meter. (The metering
+    capture was briefly narrowed to only the expanded sink while chasing the
+    dropout; that turned out to be an EQ denormal issue, not the meters, so we
+    watch all outputs again.)
     """
+    monitors = []
     try:
         r = subprocess.run(["pactl", "list", "sinks", "short"],
                            capture_output=True, text=True, timeout=3)
@@ -49,23 +52,29 @@ def _find_all_hardware_monitors():
             if len(parts) < 4:
                 continue
             name = parts[1].strip()
+            fmt_str = parts[3].strip()
+
+            channels = 2
+            for token in fmt_str.split():
+                if token.endswith("ch"):
+                    try:
+                        channels = int(token[:-2])
+                    except ValueError:
+                        pass
+
             if name == "rodecaster_expanded":
-                fmt_str = parts[3].strip()
-                channels = 2
-                for token in fmt_str.split():
-                    if token.endswith("ch"):
-                        try:
-                            channels = int(token[:-2])
-                        except ValueError:
-                            pass
-                log.info("VU meter: monitoring %s (%dch)", name, channels)
-                return [(f"{name}.monitor", channels)]
+                monitors.append((f"{name}.monitor", channels))
+            elif ("RODECaster" in name or "R__DECaster" in name) and "alsa_output" in name:
+                monitors.append((f"{name}.monitor", channels))
 
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
 
-    log.info("VU meter: expanded node not found, using default monitor")
-    return [("@DEFAULT_MONITOR@", 2)]
+    if not monitors:
+        return [("@DEFAULT_MONITOR@", 2)]
+
+    log.info("VU meter: monitoring %d output(s)", len(monitors))
+    return monitors
 
 
 class _SourceMonitor:
