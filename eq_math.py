@@ -1,7 +1,37 @@
 """Biquad filter frequency response computation for Tonal."""
 
 import math
-from constants import SAMPLE_RATE, FILTER_TYPES, FILTER_LABELS, FILTER_SHORT
+from constants import (
+    SAMPLE_RATE, FILTER_TYPES, FILTER_LABELS, FILTER_SHORT,
+    MIN_BAND_FREQ, MAX_BAND_FREQ,
+)
+
+
+def clamp_freq(freq):
+    """Clamp a frequency into the safe audible range (see constants.MIN/MAX_BAND_FREQ).
+
+    Biquads below ~20 Hz at 48 kHz can stall PipeWire's real-time thread; nothing
+    audible lives below 20 Hz on real headphones, so clamping is loss-free.
+    """
+    try:
+        f = float(freq)
+    except (TypeError, ValueError):
+        return MIN_BAND_FREQ
+    return min(max(f, MIN_BAND_FREQ), MAX_BAND_FREQ)
+
+
+def clamp_bands(bands):
+    """Return bands with every frequency clamped into the safe range.
+
+    The single choke point every band passes through before it becomes a
+    PipeWire filter — imported, hand-edited, or loaded from old state.
+    """
+    out = []
+    for b in bands:
+        cf = clamp_freq(b.get("freq", 1000.0))
+        out.append({**b, "freq": cf} if cf != b.get("freq") else b)
+    return out
+
 
 def _biquad_coeffs(f0, gain_db, q, filter_type):
     """Compute biquad filter coefficients (b0, b1, b2, a0, a1, a2)."""
