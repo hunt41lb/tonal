@@ -110,6 +110,22 @@ TYPE_TO_PIPEWIRE = {
     "allpass":   "bq_allpass",
 }
 
+# ── Default EQ Profile ──────────────────────────────────────────────────────
+# Bands the "Default" profile ships with: 7 log-spaced peaking bands, all flat
+# (0 dB) so a new user can grab any slider immediately instead of adding bands
+# one at a time. Frequencies follow a musical, roughly ISO-spaced layout.
+
+DEFAULT_EQ_BANDS = [
+    {"freq": 60,    "q": 1.0, "gain": 0.0, "type": "peak"},
+    {"freq": 150,   "q": 1.0, "gain": 0.0, "type": "peak"},
+    {"freq": 400,   "q": 1.0, "gain": 0.0, "type": "peak"},
+    {"freq": 1000,  "q": 1.0, "gain": 0.0, "type": "peak"},
+    {"freq": 2400,  "q": 1.0, "gain": 0.0, "type": "peak"},
+    {"freq": 6000,  "q": 1.0, "gain": 0.0, "type": "peak"},
+    {"freq": 15000, "q": 1.0, "gain": 0.0, "type": "peak"},
+]
+
+
 # ── Application ─────────────────────────────────────────────────────────────
 
-APP_VERSION = "1.0.4-u3"
+APP_VERSION = "1.0.4-u4"
