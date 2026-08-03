@@ -292,8 +292,32 @@ def ensure_expanded_ready(state):
     return recovered, ("recovered" if recovered else "restart did not bring up adapter")
 
 
+def pin_output_volumes(state):
+    """Pin the raw hardware output sinks (USB-1 Chat, USB-2) to unity (100%).
+
+    Tonal creates the expanded sink fresh at 100% on every apply, but the raw
+    USB Chat / USB-2 outputs are managed by WirePlumber, which restores whatever
+    level it last remembered — often ~40%. That makes those channels sound
+    quieter for no visible reason and reads like an app bug. Renormalizing here
+    keeps every output at the same reference; WirePlumber then persists it.
+    Retries briefly since the sinks can still be settling after a restart.
+    """
+    for node in (state["hardware"].get("usb1_chat_node"),
+                 state["hardware"].get("usb2_node")):
+        if not node:
+            continue
+        for _ in range(6):
+            ok, _out = _run(["pactl", "set-sink-volume", node, "100%"])
+            if ok:
+                log.info("Pinned output '%s' to 100%%", node)
+                break
+            time.sleep(0.5)
+        else:
+            log.warning("Could not pin volume on '%s' after retries", node)
+
+
 def apply_config(state, default_node="system_eq"):
-    """Full apply: save → write → restart → wait for nodes → set default → background re-route."""
+    """Full apply: save → write → restart → wait for nodes → set default → pin volumes → background re-route."""
     from config_gen import write_configs
     from state import save_state
 
@@ -332,6 +356,9 @@ def apply_config(state, default_node="system_eq"):
     ok, msg = set_default_sink(default_node)
     if not ok:
         return False, f"Restarted but default sink failed: {msg}"
+
+    # Normalize raw USB output levels so no channel is mysteriously quiet
+    pin_output_volumes(state)
 
     # Start background re-routing — polls for 12 seconds as apps reconnect
     threading.Thread(target=_reapply_routing_loop, args=(state,), daemon=True).start()
