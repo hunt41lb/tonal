@@ -141,4 +141,4 @@ DEFAULT_EQ_BANDS = [
 
 # ── Application ─────────────────────────────────────────────────────────────
 
-APP_VERSION = "1.0.4-u5"
+APP_VERSION = "1.0.4-u6"
