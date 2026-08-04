@@ -1,277 +1,387 @@
-"""Tonal state management — auto-detects hardware, no hardcoded defaults."""
+"""PipeWire system interaction — restart, query, move streams."""
 
-import json
-import os
-import copy
 import subprocess
+import os
+import time
 import logging
-from constants import (
-    STATE_DIR, STATE_FILE, EXPANDED_CHANNEL_MAP, DEFAULT_EQ_BANDS,
-    TARGET_EXPANDED, TARGET_USB1_CHAT, TARGET_USB2,
-)
+import threading
 
-log = logging.getLogger("tonal.state")
+from constants import TARGET_EXPANDED
+from eq_math import clamp_bands
+from state import resolve_expanded_target
 
-def load_state():
-    """Load state from disk, then always refresh hardware detection."""
-    state = None
-
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE, "r") as f:
-                state = json.load(f)
-            log.info("Loaded state from %s", STATE_FILE)
-        except (json.JSONDecodeError, IOError) as e:
-            log.warning("Failed to load state (%s), re-detecting", e)
-
-    if state is None:
-        log.info("First run — detecting hardware and building initial state")
-        state = build_state_from_hardware()
-        save_state(state)
-        return state
-
-    # Migrate older saved states (e.g. an empty Default profile) up to current
-    # expectations before using them.
-    _migrate_state(state)
-
-    # Always refresh hardware detection so status is current
-    hw = detect_hardware()
-    state["hardware"] = hw
-    log.info("Hardware detection refreshed")
-    return state
+log = logging.getLogger("tonal.pipewire")
 
 
-def _migrate_state(state):
-    """In-place upgrades for states saved by earlier versions."""
-    # Seed the Default profile with flat bands if it was saved empty, so the
-    # user always has 7 sliders ready to move instead of a blank EQ.
-    profiles = state.get("eq", {}).get("profiles", {})
-    default = profiles.get("Default")
-    if default is not None and not default.get("bands"):
-        default["bands"] = copy.deepcopy(DEFAULT_EQ_BANDS)
-        log.info("Migrated empty 'Default' profile → %d flat bands", len(DEFAULT_EQ_BANDS))
-
-
-def save_state(state):
-    """Save state to disk."""
-    os.makedirs(STATE_DIR, exist_ok=True)
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
-    log.info("State saved to %s", STATE_FILE)
-
-
-def build_state_from_hardware():
-    """Scan hardware and build a clean initial state. Nothing hardcoded."""
-    hw = detect_hardware()
-    channels = detect_channels(hw)
-
-    return {
-        "version": 1,
-        "channels": channels,
-        "eq": {
-            "enabled": True,
-            "preamp_db": 0.0,
-            "active_profile": "Default",
-            "profiles": {
-                "Default": {
-                    "preamp_db": 0.0,
-                    "bands": copy.deepcopy(DEFAULT_EQ_BANDS),
-                },
-            },
-        },
-        "routing": {
-            "rules": [],
-        },
-        "hardware": hw,
-    }
-
-
-def detect_hardware():
-    """Scan system for RODECaster Pro II USB devices and PipeWire nodes."""
-    hw = {
-        "usb1_detected": False,
-        "usb2_detected": False,
-        "expanded_mode": False,
-        "expanded_channels": 0,
-        "usb1_alsa_name": "",
-        "usb1_alsa_card": "",
-        "usb2_alsa_name": "",
-        "usb1_chat_node": "",
-        "usb2_node": "",
-    }
-
-    # ── Detect ALSA cards ───────────────────────────────────────────────
+def _run(cmd, timeout=10):
     try:
-        with open("/proc/asound/cards", "r") as f:
-            cards_text = f.read()
-
-        for line in cards_text.split("\n"):
-            line = line.strip()
-            if "RODECaster Pro II" in line and "[" in line:
-                card_num = line.split()[0]
-                card_name = line.split("[")[1].split("]")[0].strip()
-                hw["usb1_detected"] = True
-                hw["usb1_alsa_name"] = card_name
-                hw["usb1_alsa_card"] = card_num
-                log.info("USB 1 detected: ALSA card %s (%s)", card_num, card_name)
-            elif "RØDECaster Pro II" in line and "[" in line:
-                card_name = line.split("[")[1].split("]")[0].strip()
-                hw["usb2_detected"] = True
-                hw["usb2_alsa_name"] = card_name
-                log.info("USB 2 detected: ALSA card %s", card_name)
-    except IOError:
-        log.warning("Could not read /proc/asound/cards")
-
-    # ── Check expanded mode ─────────────────────────────────────────────
-    if hw["usb1_detected"] and hw["usb1_alsa_card"]:
-        stream1_path = f'/proc/asound/card{hw["usb1_alsa_card"]}/stream1'
-        try:
-            with open(stream1_path, "r") as f:
-                stream_text = f.read()
-            for line in stream_text.split("\n"):
-                if "Channels:" in line:
-                    ch_count = int(line.split(":")[1].strip())
-                    hw["expanded_channels"] = ch_count
-                    hw["expanded_mode"] = (ch_count == 10)
-                    log.info("USB 1 stream1: %d channels (expanded=%s)", ch_count, hw["expanded_mode"])
-                    break
-        except (IOError, ValueError):
-            log.warning("Could not read %s", stream1_path)
-
-    # ── Detect PipeWire node names ──────────────────────────────────────
-    try:
-        r = subprocess.run(["pw-cli", "list-objects", "Node"],
-                           capture_output=True, text=True, timeout=5)
-        if r.returncode == 0:
-            for line in r.stdout.split("\n"):
-                if "node.name" in line and "alsa_output" in line and "=" in line:
-                    node = line.split("=")[1].strip().strip('"')
-                    if "RODECaster_Pro_II" in node:
-                        hw["usb1_chat_node"] = node
-                        log.info("USB 1 Chat PipeWire node: %s", node)
-                    elif "R__DECaster_Pro_II" in node:
-                        hw["usb2_node"] = node
-                        log.info("USB 2 PipeWire node: %s", node)
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        log.warning("Could not query PipeWire nodes")
-
-    return hw
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode == 0, r.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        log.error("Command failed: %s — %s", cmd, e)
+        return False, str(e)
 
 
-def hardware_fingerprint():
-    """A signature of the RODECaster-relevant ALSA topology.
+def restart_pipewire():
+    log.info("Restarting PipeWire...")
+    ok, out = _run(["systemctl", "--user", "restart", "pipewire", "pipewire-pulse", "wireplumber"])
+    if ok:
+        log.info("PipeWire restart command sent")
+        return True, "PipeWire restarted"
+    log.error("Restart failed: %s", out)
+    return False, f"Failed to restart: {out}"
 
-    Captures each RODECaster card line from /proc/asound/cards, including its
-    index and USB path, so the signature changes when a RODECaster connection is
-    added, removed, or re-enumerated on a different USB port. Callers poll this
-    to detect hotplug/port-move events without a restart.
+
+def _wait_for_nodes(node_names, timeout=8):
+    """Poll until all specified PipeWire nodes appear (or timeout)."""
+    start = time.time()
+    while time.time() - start < timeout:
+        ok, out = _run(["pw-cli", "list-objects", "Node"], timeout=3)
+        if ok:
+            found = sum(1 for name in node_names if f'"{name}"' in out)
+            if found >= len(node_names):
+                elapsed = time.time() - start
+                log.info("All %d nodes ready in %.1fs", len(node_names), elapsed)
+                return True
+            log.info("Waiting for nodes: %d/%d ready...", found, len(node_names))
+        time.sleep(0.3)
+    log.warning("Timeout waiting for nodes after %.1fs", timeout)
+    return False
+
+
+def _reapply_routing_loop(state):
+    """Background loop: poll for reconnecting streams and re-route them as they appear."""
+    ch_map = {ch["name"]: ch["node"] for ch in state["channels"]}
+
+    # Build app/binary → node mapping from routing rules
+    route_map = {}
+    for rule in state["routing"]["rules"]:
+        node = ch_map.get(rule["channel"])
+        if node:
+            if rule.get("binary"):
+                route_map[rule["binary"]] = node
+            route_map[rule["app"]] = node
+
+    if not route_map:
+        log.info("No routing rules configured — skipping stream re-routing")
+        return
+
+    moved_ids = set()
+    log.info("Background re-routing started — watching for streams to reconnect...")
+
+    for attempt in range(12):
+        time.sleep(1.0)
+
+        streams = get_active_streams()
+        if not streams:
+            continue
+
+        sinks = get_sink_list()
+        sink_map = {s["name"]: s["id"] for s in sinks}
+
+        for stream in streams:
+            sid = stream["stream_id"]
+            if sid in moved_ids:
+                continue
+            target_node = route_map.get(stream["app"])
+            if target_node and target_node in sink_map:
+                target_sink = sink_map[target_node]
+                if target_sink != stream.get("sink_id"):
+                    ok, _ = move_stream(sid, target_sink)
+                    if ok:
+                        moved_ids.add(sid)
+                        log.info("Re-routed '%s' (stream %s) → %s", stream["app"], sid, target_node)
+
+    log.info("Background re-routing done: moved %d stream(s) over 12s", len(moved_ids))
+
+
+def set_default_sink(node_name):
+    log.info("Setting default sink: %s", node_name)
+    ok, out = _run(["pw-metadata", "0", "default.configured.audio.sink", f'{{"name":"{node_name}"}}'])
+    return (True, f"Default: {node_name}") if ok else (False, f"Failed: {out}")
+
+
+def get_pipewire_version():
+    ok, out = _run(["pw-cli", "info", "0"])
+    if ok:
+        for line in out.split("\n"):
+            if "version" in line.lower() and ":" in line:
+                return line.split(":")[1].strip()
+    return "unknown"
+
+
+def is_service_running(service):
+    ok, _ = _run(["systemctl", "--user", "is-active", service])
+    return ok
+
+
+def get_pipewire_nodes(state=None):
+    """Report status for the PipeWire nodes Tonal actually manages.
+
+    The node names are read live from the current channel configuration in
+    `state` — never hardcoded — so the Status page always reflects the channels
+    that were really generated (system_eq, game_eq, chat_eq, ...) rather than a
+    stale wishlist. The shared expanded ALSA adapter is included whenever any
+    enabled channel routes through it.
     """
+    channels = (state or {}).get("channels", [])
+    targets = []
+    if any(ch.get("target") == TARGET_EXPANDED for ch in channels if ch.get("enabled")):
+        targets.append(TARGET_EXPANDED)
+    targets.extend(ch["node"] for ch in channels if ch.get("enabled"))
+
+    if not targets:
+        # No configured channels yet (device not detected) — keep the row list
+        # non-empty so the page renders, but don't invent channel names.
+        targets = [TARGET_EXPANDED]
+
+    ok, out = _run(["pw-cli", "list-objects", "Node"])
+    if not ok:
+        return [{"name": n, "status": "unknown"} for n in targets]
+    return [{"name": n, "status": "running" if f'"{n}"' in out else "missing"} for n in targets]
+
+
+def check_usb_connected():
     try:
         with open("/proc/asound/cards", "r") as f:
-            text = f.read()
+            cards = f.read()
+        return {"usb1": "RODECaster Pro II" in cards, "usb2": "RØDECaster Pro II" in cards}
     except IOError:
-        return ""
-    return "\n".join(line.strip() for line in text.split("\n")
-                     if "CASTER" in line.upper())
+        return {"usb1": False, "usb2": False}
 
 
-def detect_channels(hw):
-    """Build channel list from detected hardware."""
-    channels = []
-
-    if hw["usb1_detected"] and hw["expanded_mode"]:
-        # Expanded mode: System + Game + Music + A + B on the 10-channel interface
-        for i, ch_def in enumerate(EXPANDED_CHANNEL_MAP):
-            channels.append({
-                "name": ch_def["device_name"],
-                "node": ch_def["device_name"].lower().replace(" ", "_") + "_eq",
-                "target": ch_def["target"],
-                "position": ch_def["position"],
-                "enabled": True,
-                "is_default": (i == 0),  # First channel (System) is default
-            })
-            log.info("Channel: %s → %s %s", ch_def["device_name"],
-                     ch_def["target"], ch_def["position"])
-
-        # Chat is on USB 1's separate stereo PCM device
-        if hw["usb1_chat_node"]:
-            channels.append({
-                "name": "Chat",
-                "node": "chat_eq",
-                "target": TARGET_USB1_CHAT,
-                "position": ["FL", "FR"],
-                "enabled": True,
-                "is_default": False,
-            })
-            log.info("Channel: Chat → USB 1 Chat")
-
-    elif hw["usb1_detected"]:
-        # Standard mode: just Main and Chat
-        channels.append({
-            "name": "Main",
-            "node": "main_eq",
-            "target": TARGET_USB1_CHAT,
-            "position": ["FL", "FR"],
-            "enabled": True,
-            "is_default": True,
-        })
-        log.info("Channel: Main (standard mode)")
-
-    # USB 2 is always a separate stereo device
-    if hw["usb2_detected"] and hw["usb2_node"]:
-        channels.append({
-            "name": "USB 2",
-            "node": "usb2_eq",
-            "target": TARGET_USB2,
-            "position": ["FL", "FR"],
-            "enabled": True,
-            "is_default": False,
-        })
-        log.info("Channel: USB 2 → Secondary")
-
-    if not channels:
-        log.warning("No RODECaster channels detected — is the device connected?")
-
-    return channels
+def get_active_streams():
+    ok, out = _run(["pactl", "list", "sink-inputs"])
+    if not ok:
+        return []
+    streams, cur = [], {}
+    for line in out.split("\n"):
+        line = line.strip()
+        if line.startswith("Sink Input #"):
+            if cur.get("app"):
+                streams.append(cur)
+            cur = {"stream_id": line.replace("Sink Input #", "").strip(), "app": "", "sink_id": ""}
+        elif line.startswith("Sink:"):
+            cur["sink_id"] = line.split(":")[1].strip()
+        elif line.startswith("application.name"):
+            cur["app"] = line.split("=")[1].strip().strip('"')
+    if cur.get("app"):
+        streams.append(cur)
+    return [s for s in streams if s["app"] and not s["app"].startswith("PipeWire")]
 
 
-# ── Profile helpers ─────────────────────────────────────────────────────────
+def get_sink_list():
+    ok, out = _run(["pactl", "list", "sinks", "short"])
+    if not ok:
+        return []
+    sinks = []
+    for line in out.split("\n"):
+        parts = line.split("\t")
+        if len(parts) >= 2:
+            sinks.append({"id": parts[0].strip(), "name": parts[1].strip()})
+    return sinks
 
-def get_active_bands(state):
-    name = state["eq"]["active_profile"]
-    return state["eq"]["profiles"].get(name, {}).get("bands", [])
+
+def move_stream(stream_id, sink_id):
+    ok, out = _run(["pactl", "move-sink-input", str(stream_id), str(sink_id)])
+    return (True, "Stream moved") if ok else (False, f"Failed: {out}")
+
+def _find_node_id(node_name):
+    """Find PipeWire object ID by node.name."""
+    ok, out = _run(["pw-cli", "list-objects", "Node"])
+    if not ok:
+        return None
+    current_id = None
+    for line in out.split("\n"):
+        line = line.strip()
+        if line.startswith("id ") and "type PipeWire:Interface:Node" in line:
+            current_id = line.split(",")[0].replace("id ", "").strip()
+        elif f'node.name = "{node_name}"' in line and current_id:
+            return current_id
+        elif line.startswith("id "):
+            current_id = None
+    return None
 
 
-def get_active_preamp(state):
-    name = state["eq"]["active_profile"]
-    return state["eq"]["profiles"].get(name, {}).get("preamp_db", 0.0)
+def _build_eq_params(preamp_db, bands):
+    """Build the SPA JSON params array for all EQ controls."""
+    parts = [f'"preamp:Gain" {preamp_db}']
+    for i, band in enumerate(bands):
+        name = f"eq{i:02d}"
+        parts.append(f'"{name}:Freq" {band["freq"]}')
+        parts.append(f'"{name}:Q" {band["q"]}')
+        parts.append(f'"{name}:Gain" {band["gain"]}')
+    return "{ params = [ " + " ".join(parts) + " ] }"
 
 
-def save_profile_bands(state, bands, preamp_db):
-    name = state["eq"]["active_profile"]
-    if name in state["eq"]["profiles"]:
-        state["eq"]["profiles"][name]["bands"] = copy.deepcopy(bands)
-        state["eq"]["profiles"][name]["preamp_db"] = preamp_db
-    state["eq"]["preamp_db"] = preamp_db
-    log.info("Profile '%s' updated: %d bands, preamp %.1f dB", name, len(bands), preamp_db)
+def apply_eq_live(state):
+    """Update EQ parameters on running filter chains — no PipeWire restart needed."""
+    from state import save_state
 
-def backup_profile_before_apply(state):
-    """Clone the active profile with today's date before applying changes."""
-    from datetime import date
-    name = state["eq"]["active_profile"]
-    profile = state["eq"]["profiles"].get(name)
+    save_state(state)
 
-    # Only backup if the profile has actual bands
-    if not profile or not profile.get("bands"):
-        return
+    eq = state["eq"]
+    profile = eq["profiles"].get(eq["active_profile"], {})
+    # Clamp before pushing to running nodes — a live Freq update could otherwise
+    # drive a band below the safe floor. See constants.MIN_BAND_FREQ.
+    profile_bands = clamp_bands(profile.get("bands", []))
 
-    today = date.today().strftime("%m-%d-%Y")
-    backup_name = f"{name}-{today}"
+    if eq["enabled"]:
+        preamp_db = profile.get("preamp_db", 0.0)
+        bands = profile_bands
+    else:
+        # EQ disabled — send bands with gain zeroed so running filter chain
+        # nodes are explicitly flattened. Without this, the band nodes keep
+        # their last-applied gain values since pw-cli set-param is per-property.
+        preamp_db = 0.0
+        bands = [{"freq": b["freq"], "q": b["q"], "gain": 0.0} for b in profile_bands]
 
-    # Don't overwrite if already backed up today
-    if backup_name in state["eq"]["profiles"]:
-        log.info("Backup '%s' already exists for today", backup_name)
-        return
+    params_str = _build_eq_params(preamp_db, bands)
+    updated = 0
+    failed = 0
 
-    state["eq"]["profiles"][backup_name] = copy.deepcopy(profile)
-    log.info("Backed up profile '%s' as '%s'", name, backup_name)
+    for ch in state["channels"]:
+        if not ch["enabled"]:
+            continue
+
+        node_id = _find_node_id(ch["node"])
+        if not node_id:
+            log.warning("Node '%s' not found — skipping live update", ch["node"])
+            failed += 1
+            continue
+
+        ok, out = _run(["pw-cli", "set-param", node_id, "Props", params_str])
+        if ok:
+            updated += 1
+            log.info("Live EQ update on '%s' (id %s) succeeded", ch["node"], node_id)
+        else:
+            failed += 1
+            log.error("Live EQ update on '%s' failed: %s", ch["node"], out)
+
+    if failed > 0 and updated == 0:
+        return False, f"Live EQ update failed on all {failed} node(s) — try full restart"
+    elif failed > 0:
+        return True, f"EQ updated on {updated} node(s), {failed} failed"
+    else:
+        return True, f"EQ updated live on {updated} channel(s) — no restart needed"
+
+def ensure_expanded_ready(state):
+    """Recover from the boot-time race where PipeWire starts before the RODECaster's
+    USB card is enumerated.
+
+    Symptom (seen in the journal): 'hw:...,1 playback open failed: No such device'
+    → the expanded adapter never appears until a manual audio-server restart. If
+    an expanded channel is configured and its ALSA card is now present but the
+    'rodecaster_expanded' node is missing, restart PipeWire ONCE to bring it up.
+    No-ops on a healthy launch.
+
+    A restart only helps when the config is correct and the card simply arrived
+    late. If the card has been renumbered since the config was written, the path
+    is wrong and restarting cannot fix it — it just burns restarts against
+    systemd's start limit. So the live ALSA topology is checked against what the
+    config was built from, and a mismatch asks for a regenerate instead.
+    """
+    hw = state.get("hardware", {})
+    needs_expanded = any(ch.get("target") == TARGET_EXPANDED
+                         for ch in state.get("channels", []) if ch.get("enabled"))
+    if not needs_expanded or not hw.get("usb1_detected"):
+        return False, "no expanded channel or card not present"
+
+    ok, out = _run(["pw-cli", "list-objects", "Node"], timeout=3)
+    if ok and '"rodecaster_expanded"' in out:
+        return False, "expanded adapter already running"
+
+    current = resolve_expanded_target()
+    if current is None:
+        log.info("No 10-channel PCM present — nothing for a restart to recover")
+        return False, "no expanded PCM present — check USB 1 and Expanded mode"
+
+    card_num, dev, _ch = current
+    if (str(card_num) != str(hw.get("usb1_alsa_card"))
+            or dev != hw.get("usb1_expanded_dev")):
+        log.warning("Expanded PCM moved to card %s device %d (config was built for "
+                    "card %s device %s) — regenerate rather than restart",
+                    card_num, dev, hw.get("usb1_alsa_card"), hw.get("usb1_expanded_dev"))
+        return False, "hardware moved — Save & Apply to regenerate the config"
+
+    log.warning("Expanded adapter missing though card is present — "
+                "restarting PipeWire to recover from boot-time race")
+    restart_pipewire()
+    time.sleep(1.0)
+    recovered = _wait_for_nodes(["rodecaster_expanded"], timeout=6)
+    return recovered, ("recovered" if recovered else "restart did not bring up adapter")
+
+
+def pin_output_volumes(state):
+    """Pin the raw hardware output sinks (USB-1 Chat, USB-2) to unity (100%).
+
+    Tonal creates the expanded sink fresh at 100% on every apply, but the raw
+    USB Chat / USB-2 outputs are managed by WirePlumber, which restores whatever
+    level it last remembered — often ~40%. That makes those channels sound
+    quieter for no visible reason and reads like an app bug. Renormalizing here
+    keeps every output at the same reference; WirePlumber then persists it.
+    Retries briefly since the sinks can still be settling after a restart.
+    """
+    for node in (state["hardware"].get("usb1_chat_node"),
+                 state["hardware"].get("usb2_node")):
+        if not node:
+            continue
+        for _ in range(6):
+            ok, _out = _run(["pactl", "set-sink-volume", node, "100%"])
+            if ok:
+                log.info("Pinned output '%s' to 100%%", node)
+                break
+            time.sleep(0.5)
+        else:
+            log.warning("Could not pin volume on '%s' after retries", node)
+
+
+def apply_config(state, default_node="system_eq"):
+    """Full apply: save → write → restart → wait for nodes → set default → pin volumes → background re-route."""
+    from config_gen import write_configs
+    from state import save_state
+
+    save_state(state)
+    log.info("State saved")
+
+    try:
+        write_configs(state)
+        log.info("Configs written (with backups)")
+    except Exception as e:
+        log.error("Config write failed: %s", e)
+        return False, f"Failed to write configs: {e}"
+
+    # Clear stale stream state
+    sp = os.path.expanduser("~/.local/state/wireplumber/stream-properties")
+    if os.path.exists(sp):
+        try:
+            os.remove(sp)
+        except IOError:
+            pass
+
+    # Restart PipeWire
+    ok, msg = restart_pipewire()
+    if not ok:
+        return False, msg
+
+    # Wait for filter chain nodes to appear
+    enabled_nodes = [ch["node"] for ch in state["channels"] if ch["enabled"]]
+    if enabled_nodes:
+        _wait_for_nodes(enabled_nodes)
+
+    # Set default sink
+    default_ch = next((ch for ch in state["channels"] if ch.get("is_default")), None)
+    if default_ch:
+        default_node = default_ch["node"]
+    ok, msg = set_default_sink(default_node)
+    if not ok:
+        return False, f"Restarted but default sink failed: {msg}"
+
+    # Normalize raw USB output levels so no channel is mysteriously quiet
+    pin_output_volumes(state)
+
+    # Start background re-routing — polls for 12 seconds as apps reconnect
+    threading.Thread(target=_reapply_routing_loop, args=(state,), daemon=True).start()
+
+    log.info("Apply complete — background re-routing started")
+    return True, "Applied — audio streams will reconnect automatically"
