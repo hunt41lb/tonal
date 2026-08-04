@@ -3,12 +3,42 @@
 # Usage: ./build-deb.sh
 set -e
 
-VERSION="1.0.4-u5"
+VERSION="1.0.4-u6"
 PKG_NAME="tonal"
 PKG_DIR="build/${PKG_NAME}_${VERSION}_all"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "Building ${PKG_NAME} ${VERSION}..."
+
+# ── Pre-flight: never package a tree that doesn't compile and import ─
+# A file pasted into the wrong place, or an edit that breaks an import, must
+# fail here rather than shipping in a .deb and taking out the user's audio.
+echo "Checking sources..."
+python3 -m py_compile \
+    "${SCRIPT_DIR}"/*.py \
+    "${SCRIPT_DIR}"/pages/*.py \
+    "${SCRIPT_DIR}"/widgets/*.py
+( cd "${SCRIPT_DIR}" && python3 -c "import constants, state, config_gen, pipewire_ctl, eq_math" )
+# Guard against a module being overwritten by a copy of another one
+for m in state config_gen pipewire_ctl eq_math; do
+    head -1 "${SCRIPT_DIR}/${m}.py" | grep -q '"""' || {
+        echo "ERROR: ${m}.py has no module docstring — is it the right file?" >&2
+        exit 1
+    }
+done
+python3 - "${SCRIPT_DIR}" <<'PYEOF'
+import hashlib, sys, pathlib, collections
+root = pathlib.Path(sys.argv[1])
+seen = collections.defaultdict(list)
+for p in sorted(root.glob("*.py")):
+    seen[hashlib.sha256(p.read_bytes()).hexdigest()].append(p.name)
+dupes = [names for names in seen.values() if len(names) > 1]
+if dupes:
+    for names in dupes:
+        print(f"ERROR: identical files — {', '.join(names)}", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+echo "Sources OK"
 
 # Clean previous build
 rm -rf build/
