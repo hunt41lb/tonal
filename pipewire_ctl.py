@@ -8,6 +8,7 @@ import threading
 
 from constants import TARGET_EXPANDED
 from eq_math import clamp_bands
+from state import resolve_expanded_target
 
 log = logging.getLogger("tonal.pipewire")
 
@@ -269,10 +270,16 @@ def ensure_expanded_ready(state):
     USB card is enumerated.
 
     Symptom (seen in the journal): 'hw:...,1 playback open failed: No such device'
-    → the filter-chain daemon exits and the expanded adapter never appears until a
-    manual audio-server restart. If an expanded channel is configured and its ALSA
-    card is now present but the 'rodecaster_expanded' node is missing, restart
-    PipeWire ONCE to bring it up. No-ops on a healthy launch.
+    → the expanded adapter never appears until a manual audio-server restart. If
+    an expanded channel is configured and its ALSA card is now present but the
+    'rodecaster_expanded' node is missing, restart PipeWire ONCE to bring it up.
+    No-ops on a healthy launch.
+
+    A restart only helps when the config is correct and the card simply arrived
+    late. If the card has been renumbered since the config was written, the path
+    is wrong and restarting cannot fix it — it just burns restarts against
+    systemd's start limit. So the live ALSA topology is checked against what the
+    config was built from, and a mismatch asks for a regenerate instead.
     """
     hw = state.get("hardware", {})
     needs_expanded = any(ch.get("target") == TARGET_EXPANDED
@@ -283,6 +290,19 @@ def ensure_expanded_ready(state):
     ok, out = _run(["pw-cli", "list-objects", "Node"], timeout=3)
     if ok and '"rodecaster_expanded"' in out:
         return False, "expanded adapter already running"
+
+    current = resolve_expanded_target()
+    if current is None:
+        log.info("No 10-channel PCM present — nothing for a restart to recover")
+        return False, "no expanded PCM present — check USB 1 and Expanded mode"
+
+    card_num, dev, _ch = current
+    if (str(card_num) != str(hw.get("usb1_alsa_card"))
+            or dev != hw.get("usb1_expanded_dev")):
+        log.warning("Expanded PCM moved to card %s device %d (config was built for "
+                    "card %s device %s) — regenerate rather than restart",
+                    card_num, dev, hw.get("usb1_alsa_card"), hw.get("usb1_expanded_dev"))
+        return False, "hardware moved — Save & Apply to regenerate the config"
 
     log.warning("Expanded adapter missing though card is present — "
                 "restarting PipeWire to recover from boot-time race")
