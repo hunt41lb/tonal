@@ -1,12 +1,18 @@
 #!/bin/bash
 # Build a .deb package for Tonal
-# Usage: ./build-deb.sh
+# Usage: ./build-deb.sh [version]
+#   With no argument the version is read from APP_VERSION in constants.py —
+#   bump it there and this script follows. Pass an override for test builds
+#   (e.g. ./build-deb.sh "1.0.5~rc1"). Either way the packaged constants.py
+#   is stamped with the build version, so the installed app can never
+#   disagree with the .deb it came from (the updater compares against it).
 set -e
 
-VERSION="1.0.4-u6"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VERSION="${1:-$(grep -oP '^APP_VERSION = "\K[^"]+' "${SCRIPT_DIR}/constants.py")}"
+[ -n "${VERSION}" ] || { echo "ERROR: could not determine version from constants.py" >&2; exit 1; }
 PKG_NAME="tonal"
 PKG_DIR="build/${PKG_NAME}_${VERSION}_all"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "Building ${PKG_NAME} ${VERSION}..."
 
@@ -18,9 +24,9 @@ python3 -m py_compile \
     "${SCRIPT_DIR}"/*.py \
     "${SCRIPT_DIR}"/pages/*.py \
     "${SCRIPT_DIR}"/widgets/*.py
-( cd "${SCRIPT_DIR}" && python3 -c "import constants, state, config_gen, pipewire_ctl, eq_math" )
+( cd "${SCRIPT_DIR}" && python3 -c "import constants, state, config_gen, pipewire_ctl, eq_math, updater" )
 # Guard against a module being overwritten by a copy of another one
-for m in state config_gen pipewire_ctl eq_math; do
+for m in state config_gen pipewire_ctl eq_math updater; do
     head -1 "${SCRIPT_DIR}/${m}.py" | grep -q '"""' || {
         echo "ERROR: ${m}.py has no module docstring — is it the right file?" >&2
         exit 1
@@ -53,7 +59,7 @@ Version: ${VERSION}
 Section: sound
 Priority: optional
 Architecture: all
-Depends: python3 (>= 3.12), python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1, pipewire, pipewire-pulse, wireplumber
+Depends: python3 (>= 3.12), python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1, pipewire, pipewire-pulse, wireplumber, pkexec
 Maintainer: Thomas Hunt <hunt41lb@github.com>
 Homepage: https://github.com/hunt41lb/tonal
 Description: Audio routing and EQ manager for RODECaster Pro II
@@ -105,6 +111,12 @@ cp "${SCRIPT_DIR}/pipewire_ctl.py"     "${APP_DIR}/"
 cp "${SCRIPT_DIR}/eq_math.py"          "${APP_DIR}/"
 cp "${SCRIPT_DIR}/eq_import_export.py" "${APP_DIR}/"
 cp "${SCRIPT_DIR}/vu_meter.py"         "${APP_DIR}/"
+cp "${SCRIPT_DIR}/updater.py"          "${APP_DIR}/"
+
+# Stamp the packaged copy with the build version — the source tree is left
+# untouched. The installed app must report exactly the version of the .deb
+# it came from, or the updater's comparison against GitHub is meaningless.
+sed -i "s/^APP_VERSION = .*/APP_VERSION = \"${VERSION}\"/" "${APP_DIR}/constants.py"
 
 # Pages
 cp "${SCRIPT_DIR}/pages/__init__.py"   "${APP_DIR}/pages/"
