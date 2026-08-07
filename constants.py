@@ -141,4 +141,12 @@ DEFAULT_EQ_BANDS = [
 
 # ── Application ─────────────────────────────────────────────────────────────
 
-APP_VERSION = "1.0.4-u6"
+APP_VERSION = "1.0.5-rc1"
+
+# ── Update Channel ──────────────────────────────────────────────────────────
+# The updater talks to this repository's GitHub Releases feed and nowhere
+# else. /releases/latest deliberately excludes drafts and pre-releases, so
+# betas can be published for testers without being offered as updates.
+
+GITHUB_REPO = "hunt41lb/tonal"
+UPDATE_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
