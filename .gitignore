@@ -22,3 +22,6 @@ Thumbs.db
 
 # Tonal state (user-specific, generated at runtime)
 # Users should not commit their personal state/config
+
+# Build artifacts (releases carry the .debs — never commit them)
+build/
