@@ -141,7 +141,7 @@ DEFAULT_EQ_BANDS = [
 
 # ── Application ─────────────────────────────────────────────────────────────
 
-APP_VERSION = "1.0.5-rc1"
+APP_VERSION = "1.0.6"
 
 # ── Update Channel ──────────────────────────────────────────────────────────
 # The updater talks to this repository's GitHub Releases feed and nowhere
