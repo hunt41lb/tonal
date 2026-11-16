@@ -155,7 +155,10 @@ cp "${SCRIPT_DIR}"/data/icons/scalable/actions/*.svg \
    "${APP_DIR}/data/icons/scalable/actions/"
 
 # ── Build the .deb ──────────────────────────────────────────────────
-dpkg-deb --build "${PKG_DIR}"
+# --root-owner-group: installed files belong to root:root, not to whoever ran
+# the build. Without it everything under /usr/share/tonal is owned by the
+# builder's UID.
+dpkg-deb --root-owner-group --build "${PKG_DIR}"
 
 DEB_FILE="build/${PKG_NAME}_${VERSION}_all.deb"
 echo ""

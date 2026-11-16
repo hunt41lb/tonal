@@ -8,7 +8,7 @@ import threading
 
 from constants import TARGET_EXPANDED
 from eq_math import clamp_bands
-from state import resolve_expanded_target
+from state import detect_hardware
 
 log = logging.getLogger("tonal.pipewire")
 
@@ -265,51 +265,47 @@ def apply_eq_live(state):
     else:
         return True, f"EQ updated live on {updated} channel(s) — no restart needed"
 
-def ensure_expanded_ready(state):
-    """Recover from the boot-time race where PipeWire starts before the RODECaster's
-    USB card is enumerated.
+def ensure_routing_ready(state):
+    """Launch-time health check: is the routing config right for the hardware
+    that is plugged in now, and are its nodes up?
 
-    Symptom (seen in the journal): 'hw:...,1 playback open failed: No such device'
-    → the expanded adapter never appears until a manual audio-server restart. If
-    an expanded channel is configured and its ALSA card is now present but the
-    'rodecaster_expanded' node is missing, restart PipeWire ONCE to bring it up.
-    No-ops on a healthy launch.
+    Three outcomes:
+      * config matches and every node is running → (True, "")
+      * config matches but nodes are missing → the device enumerated after
+        PipeWire started (boot race). The config is correct, so ONE restart can
+        fix it → (True, "Recovered ...") or (False, ...) if it didn't.
+      * config does not match (card renumbered, device missing, stale chain) →
+        (False, message). No restart — restarting a wrong config can't help and
+        only drops every app's audio. The caller asks for Save & Apply, which
+        regenerates against live hardware.
 
-    A restart only helps when the config is correct and the card simply arrived
-    late. If the card has been renumbered since the config was written, the path
-    is wrong and restarting cannot fix it — it just burns restarts against
-    systemd's start limit. So the live ALSA topology is checked against what the
-    config was built from, and a mismatch asks for a regenerate instead.
+    Hardware is re-detected for a few seconds before judging, since at login
+    Tonal can start while PipeWire is still bringing devices up.
     """
-    hw = state.get("hardware", {})
-    needs_expanded = any(ch.get("target") == TARGET_EXPANDED
-                         for ch in state.get("channels", []) if ch.get("enabled"))
-    if not needs_expanded or not hw.get("usb1_detected"):
-        return False, "no expanded channel or card not present"
+    from config_gen import check_config_current
 
-    ok, out = _run(["pw-cli", "list-objects", "Node"], timeout=3)
-    if ok and '"rodecaster_expanded"' in out:
-        return False, "expanded adapter already running"
+    ok, result = check_config_current(state, detect_hardware())
+    for _ in range(3):
+        if ok:
+            break
+        time.sleep(2.0)
+        ok, result = check_config_current(state, detect_hardware())
+    if not ok:
+        return False, result
 
-    current = resolve_expanded_target()
-    if current is None:
-        log.info("No 10-channel PCM present — nothing for a restart to recover")
-        return False, "no expanded PCM present — check USB 1 and Expanded mode"
+    needed = list(result["targets"])
+    if result["adapter"]:
+        needed.append(TARGET_EXPANDED)
+    if not needed or _wait_for_nodes(needed, timeout=6):
+        return True, ""
 
-    card_num, dev, _ch = current
-    if (str(card_num) != str(hw.get("usb1_alsa_card"))
-            or dev != hw.get("usb1_expanded_dev")):
-        log.warning("Expanded PCM moved to card %s device %d (config was built for "
-                    "card %s device %s) — regenerate rather than restart",
-                    card_num, dev, hw.get("usb1_alsa_card"), hw.get("usb1_expanded_dev"))
-        return False, "hardware moved — Save & Apply to regenerate the config"
-
-    log.warning("Expanded adapter missing though card is present — "
-                "restarting PipeWire to recover from boot-time race")
+    log.warning("Routing config is correct but nodes are missing — restarting "
+                "PipeWire once to recover from a late-enumerating device")
     restart_pipewire()
     time.sleep(1.0)
-    recovered = _wait_for_nodes(["rodecaster_expanded"], timeout=6)
-    return recovered, ("recovered" if recovered else "restart did not bring up adapter")
+    if _wait_for_nodes(needed, timeout=8):
+        return True, "Recovered audio routing after a late device"
+    return False, "Audio nodes did not come up — check connections, then Save & Apply"
 
 
 def pin_output_volumes(state):
@@ -341,15 +337,24 @@ def apply_config(state, default_node="system_eq"):
     from config_gen import write_configs
     from state import save_state
 
+    # Detect now, not at launch: card numbers and node names follow USB
+    # enumeration, and the snapshot in state may predate a reconnect or a
+    # firmware update.
+    state["hardware"] = detect_hardware()
     save_state(state)
     log.info("State saved")
 
     try:
-        write_configs(state)
-        log.info("Configs written (with backups)")
+        ok, result = write_configs(state)
     except Exception as e:
         log.error("Config write failed: %s", e)
         return False, f"Failed to write configs: {e}"
+    if not ok:
+        # Nothing was written and PipeWire is untouched — the last good config
+        # is still live.
+        log.error("Config not written: %s", result)
+        return False, f"Not applied — {result}"
+    log.info("Configs written (with backups)")
 
     # Clear stale stream state
     sp = os.path.expanduser("~/.local/state/wireplumber/stream-properties")

@@ -1,16 +1,17 @@
 """Generate PipeWire configuration files from Tonal state."""
 
 import os
+import re
 import shutil
 import datetime
 import logging
+from typing import Any
 from constants import (
     PIPEWIRE_CONF_DIR, PULSE_CONF_DIR, ROUTING_CONF, PULSE_CONF,
     TYPE_TO_PIPEWIRE, TARGET_EXPANDED, TARGET_USB1_CHAT, TARGET_USB2,
     PREAMP_SHELF_FREQ,
 )
 from eq_math import clamp_bands
-from state import resolve_expanded_target
 
 log = logging.getLogger("tonal.config")
 
@@ -74,8 +75,117 @@ def _filter_chain(description, node_name, target, position, preamp_db, bands, do
     }}"""
 
 
-def generate_routing_conf(state):
-    hw = state["hardware"]
+# What each hardware target is called in user-facing messages
+_TARGET_LABELS = {
+    TARGET_EXPANDED: "USB 1 Expanded",
+    TARGET_USB1_CHAT: "USB 1 Chat",
+    TARGET_USB2: "USB 2",
+}
+
+_ALSA_PATH_RE = re.compile(r'api\.alsa\.path\s*=\s*"([^"]*)"')
+
+
+def resolve_targets(state, hw=None) -> tuple[bool, Any]:
+    """Resolve every enabled channel to the PipeWire node its EQ chain feeds.
+
+    `hw` is a hardware snapshot from state.detect_hardware(); it defaults to
+    state["hardware"]. Callers that are about to write or verify a config should
+    pass a fresh one — card numbers and node names change with USB enumeration.
+
+    Returns (True, {"adapter": (card, dev, channels) | None,
+                    "targets": {channel_node: (target_node, dont_remix)}})
+    or (False, message) naming the hardware that is missing and the channels
+    that need it. All-or-nothing on purpose: a config with a chain pointing at a
+    device that isn't there silently sends that channel's apps to the default
+    sink, which is far harder to diagnose than a refused apply.
+    """
+    hw = state.get("hardware", {}) if hw is None else hw
+    adapter = None
+    targets = {}
+    missing = {}
+
+    for ch in state["channels"]:
+        if not ch["enabled"]:
+            continue
+        kind = ch["target"]
+
+        if kind == TARGET_EXPANDED:
+            if hw.get("expanded_mode") and hw.get("usb1_expanded_dev") is not None:
+                adapter = (hw["usb1_alsa_card"], hw["usb1_expanded_dev"],
+                           hw["expanded_channels"])
+                targets[ch["node"]] = (TARGET_EXPANDED, ch["position"] != ["FL", "FR"])
+                continue
+        elif kind == TARGET_USB1_CHAT:
+            if hw.get("usb1_chat_node"):
+                targets[ch["node"]] = (hw["usb1_chat_node"], False)
+                continue
+        elif kind == TARGET_USB2:
+            if hw.get("usb2_node"):
+                targets[ch["node"]] = (hw["usb2_node"], False)
+                continue
+        else:
+            targets[ch["node"]] = (kind, False)
+            continue
+
+        missing.setdefault(_TARGET_LABELS[kind], []).append(ch["name"])
+
+    if missing:
+        parts = [f"{dev} not found for {', '.join(names)}" for dev, names in missing.items()]
+        msg = "; ".join(parts) + " — reconnect, or disable those channels"
+        log.warning("Cannot resolve channel targets: %s", msg)
+        return False, msg
+
+    return True, {"adapter": adapter, "targets": targets}
+
+
+def check_config_current(state, hw=None) -> tuple[bool, Any]:
+    """Verify the routing config on disk matches the hardware that is present now.
+
+    Only targets are compared — channel nodes, the hardware each one feeds, and
+    the expanded adapter's ALSA path. EQ values are deliberately ignored: live
+    EQ updates change state without regenerating the file.
+
+    Returns (True, resolved) — the resolve_targets() result — or (False, message).
+    """
+    ok, resolved = resolve_targets(state, hw)
+    if not ok:
+        return False, resolved
+
+    try:
+        with open(ROUTING_CONF, "r") as f:
+            text = f.read()
+    except FileNotFoundError:
+        if not resolved["targets"]:
+            return True, resolved
+        return False, "No routing config yet — Save & Apply to create it"
+    except IOError as e:
+        return False, f"Could not read routing config: {e}"
+
+    stale = []
+    adapter = resolved["adapter"]
+    if adapter:
+        want = f"hw:{adapter[0]},{adapter[1]}"
+        m = _ALSA_PATH_RE.search(text)
+        have = m.group(1) if m else None
+        if have != want:
+            stale.append(f"expanded adapter is {have or 'missing'}, device is now {want}")
+
+    for node, (target, _remix) in resolved["targets"].items():
+        m = re.search(rf'node\.name\s*=\s*"{re.escape(node)}_out"\s*'
+                      rf'target\.object\s*=\s*"([^"]*)"', text)
+        if not m:
+            stale.append(f"no chain for {node}")
+        elif m.group(1) != target:
+            stale.append(f"{node} → {m.group(1)}, should be {target}")
+
+    if stale:
+        log.warning("Routing config is out of date: %s", "; ".join(stale))
+        return False, "Routing is out of date — Save & Apply to fix"
+    return True, resolved
+
+
+def generate_routing_conf(state, resolved):
+    """Render the routing config. `resolved` comes from resolve_targets()."""
     channels = state["channels"]
     eq = state["eq"]
     profile_name = eq["active_profile"]
@@ -95,9 +205,6 @@ def generate_routing_conf(state):
 
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Only include the ALSA adapter if we have expanded channels
-    has_expanded = any(ch["target"] == TARGET_EXPANDED for ch in channels if ch["enabled"])
-
     lines = [
         f"# RODECaster Pro II — Multi-Channel Routing with Per-Channel EQ",
         f"# Generated by Tonal on {ts}",
@@ -108,74 +215,45 @@ def generate_routing_conf(state):
         f"",
     ]
 
-    if has_expanded:
-        # Re-resolve the ALSA path here rather than trusting state["hardware"],
-        # which may have been detected minutes or reboots ago. Card numbers are
-        # assigned by USB enumeration order, so the index that was correct when
-        # the user last opened Tonal is not necessarily correct now.
-        #
+    if resolved["adapter"]:
         # An unresolvable api.alsa.path is not a cosmetic problem: this block
         # lives in context.objects, which PipeWire builds during context
         # creation, so a miss makes the daemon exit -EINVAL before it loads a
         # single module. That takes xdg-desktop-portal with it and every GTK app
         # then blocks ~25s per settings lookup at startup. Hence two guards:
-        # verify the PCM exists before writing, and mark the object nofail so a
-        # later hardware change degrades to a missing sink instead of no audio
-        # subsystem at all.
-        expanded = resolve_expanded_target()
-        if expanded is None:
-            log.warning("Expanded channels are enabled but no 10-channel PCM is "
-                        "present — omitting the ALSA adapter. Check that USB 1 is "
-                        "connected and the RODECaster is in Expanded mode.")
-        else:
-            alsa_card, alsa_dev, alsa_ch = expanded
-            lines.extend([
-                f"context.objects = [",
-                f"    {{ factory = adapter",
-                f"        flags = [ nofail ]",
-                f"        args = {{",
-                f'            factory.name           = api.alsa.pcm.sink',
-                f'            node.name              = "rodecaster_expanded"',
-                f'            node.description       = "RODECaster Expanded"',
-                f'            media.class            = Audio/Sink',
-                f'            api.alsa.path          = "hw:{alsa_card},{alsa_dev}"',
-                f"            audio.channels         = {alsa_ch}",
-                f"            audio.position         = [ FL FR FC LFE RL RR FLC FRC RC SL ]",
-                f"            audio.format           = S32LE",
-                f"            audio.rate             = 48000",
-                f"            session.suspend-timeout-seconds = 0",
-                f"        }}",
-                f"    }}",
-                f"]",
-                f"",
-            ])
+        # resolve_targets() only yields an adapter for a PCM that exists, and the
+        # object is nofail so a later hardware change degrades to a missing sink
+        # instead of no audio subsystem at all. Card numbers follow USB
+        # enumeration order, so check_config_current() re-verifies this path on
+        # every launch.
+        alsa_card, alsa_dev, alsa_ch = resolved["adapter"]
+        lines.extend([
+            f"context.objects = [",
+            f"    {{ factory = adapter",
+            f"        flags = [ nofail ]",
+            f"        args = {{",
+            f'            factory.name           = api.alsa.pcm.sink',
+            f'            node.name              = "{TARGET_EXPANDED}"',
+            f'            node.description       = "RODECaster Expanded"',
+            f'            media.class            = Audio/Sink',
+            f'            api.alsa.path          = "hw:{alsa_card},{alsa_dev}"',
+            f"            audio.channels         = {alsa_ch}",
+            f"            audio.position         = [ FL FR FC LFE RL RR FLC FRC RC SL ]",
+            f"            audio.format           = S32LE",
+            f"            audio.rate             = 48000",
+            f"            session.suspend-timeout-seconds = 0",
+            f"        }}",
+            f"    }}",
+            f"]",
+            f"",
+        ])
 
     lines.append("context.modules = [")
 
     for ch in channels:
         if not ch["enabled"]:
             continue
-
-        # Resolve target to actual PipeWire node name
-        if ch["target"] == TARGET_EXPANDED:
-            target = "rodecaster_expanded"
-            dont_remix = ch["position"] != ["FL", "FR"]
-        elif ch["target"] == TARGET_USB1_CHAT:
-            target = hw.get("usb1_chat_node", "")
-            if not target:
-                log.warning("USB 1 Chat node not detected, skipping channel '%s'", ch["name"])
-                continue
-            dont_remix = False
-        elif ch["target"] == TARGET_USB2:
-            target = hw.get("usb2_node", "")
-            if not target:
-                log.warning("USB 2 node not detected, skipping channel '%s'", ch["name"])
-                continue
-            dont_remix = False
-        else:
-            target = ch["target"]
-            dont_remix = False
-
+        target, dont_remix = resolved["targets"][ch["node"]]
         lines.append(f"\n    # ── {ch['name']} ({' '.join(ch['position'])}) ──")
         lines.append(_filter_chain(ch["name"], ch["node"], target, ch["position"],
                                     preamp_db, bands, dont_remix))
@@ -186,7 +264,7 @@ def generate_routing_conf(state):
 
 def generate_pulse_rules_conf(state):
     rules = state["routing"]["rules"]
-    ch_map = {ch["name"]: ch["node"] for ch in state["channels"]}
+    ch_map = {ch["name"]: ch["node"] for ch in state["channels"] if ch["enabled"]}
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     lines = [
@@ -196,7 +274,13 @@ def generate_pulse_rules_conf(state):
         f"pulse.rules = [",
     ]
     for rule in rules:
-        node = ch_map.get(rule["channel"], "system_eq")
+        node = ch_map.get(rule["channel"])
+        if not node:
+            # No silent fallback: an app pinned to a channel that is disabled or
+            # gone simply follows the default sink, and the log says why.
+            log.warning("Routing rule '%s' → '%s' skipped: channel is disabled or missing",
+                        rule["app"], rule["channel"])
+            continue
         key = "application.process.binary" if rule.get("binary") else "application.name"
         val = rule.get("binary", rule["app"])
         lines.append(f"    # {rule['app']} → {rule['channel']}")
@@ -209,14 +293,27 @@ def generate_pulse_rules_conf(state):
 
 
 def write_configs(state):
+    """Write both config files, or neither.
+
+    Returns (True, (routing_path, pulse_path)) or (False, message). When any
+    enabled channel's hardware is missing nothing is touched — the last good
+    config and its .bak stay in place.
+    """
+    ok, resolved = resolve_targets(state)
+    if not ok:
+        return False, resolved
+
+    routing_text = generate_routing_conf(state, resolved)
+    pulse_text = generate_pulse_rules_conf(state)
+
     os.makedirs(PIPEWIRE_CONF_DIR, exist_ok=True)
     os.makedirs(PULSE_CONF_DIR, exist_ok=True)
     _backup(ROUTING_CONF)
     _backup(PULSE_CONF)
     with open(ROUTING_CONF, "w") as f:
-        f.write(generate_routing_conf(state))
+        f.write(routing_text)
     log.info("Wrote %s", ROUTING_CONF)
     with open(PULSE_CONF, "w") as f:
-        f.write(generate_pulse_rules_conf(state))
+        f.write(pulse_text)
     log.info("Wrote %s", PULSE_CONF)
-    return ROUTING_CONF, PULSE_CONF
+    return True, (ROUTING_CONF, PULSE_CONF)

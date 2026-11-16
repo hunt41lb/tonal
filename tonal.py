@@ -99,7 +99,7 @@ class TonalWindow(Adw.ApplicationWindow):
     # ── Hardware watching ────────────────────────────────────────────────────
 
     def _start_hardware_watch(self):
-        """Recover the expanded adapter if the boot race ate it, then poll for
+        """Check the routing config against live hardware at launch, then poll for
         USB port moves / (un)plugs so a hardware change is caught live instead of
         only at the next app launch."""
         self._hw_fingerprint = hardware_fingerprint()
@@ -108,10 +108,17 @@ class TonalWindow(Adw.ApplicationWindow):
         GLib.timeout_add_seconds(3, self._check_hardware_change)
 
     def _boot_recovery(self):
-        ok, msg = pipewire_ctl.ensure_expanded_ready(self.state)
-        if ok:
-            GLib.idle_add(lambda: self.toast_overlay.add_toast(
-                Adw.Toast(title="Recovered RODECaster expanded output", timeout=3)))
+        ok, msg = pipewire_ctl.ensure_routing_ready(self.state)
+        GLib.idle_add(self._boot_recovery_done, ok, msg)
+
+    def _boot_recovery_done(self, ok, msg):
+        if not ok:
+            # Config doesn't match the hardware — one Save & Apply regenerates it
+            self.mark_dirty(requires_restart=True)
+            self.toast_overlay.add_toast(Adw.Toast(title=msg, timeout=8, use_markup=False))
+        elif msg:
+            self.toast_overlay.add_toast(Adw.Toast(title=msg, timeout=3, use_markup=False))
+        return False
 
     def _check_hardware_change(self):
         fp = hardware_fingerprint()
@@ -122,7 +129,7 @@ class TonalWindow(Adw.ApplicationWindow):
             self.mark_dirty(requires_restart=True)
             self.toast_overlay.add_toast(Adw.Toast(
                 title="RODECaster hardware changed — Save & Apply to update routing",
-                timeout=5))
+                timeout=5, use_markup=False))
         return True  # keep the poll alive
 
     def mark_dirty(self, requires_restart=False):
@@ -180,7 +187,7 @@ class TonalWindow(Adw.ApplicationWindow):
         self.apply_label.set_text("Save & Apply")
         self.apply_btn.set_sensitive(False)
 
-        toast = Adw.Toast(title=msg, timeout=3)
+        toast = Adw.Toast(title=msg, timeout=3, use_markup=False)
         if not ok:
             toast.set_title(f"Error: {msg}")
             toast.set_timeout(5)

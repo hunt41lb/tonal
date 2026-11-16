@@ -107,7 +107,7 @@ class _SourceMonitor:
 
     def _loop(self):
         try:
-            self.process = subprocess.Popen(
+            proc = subprocess.Popen(
                 ["parec", "--format=s16le", f"--channels={self.channels}",
                  "--rate=48000", f"--device={self.monitor_name}",
                  "--raw", "--latency-msec=15"],
@@ -116,13 +116,22 @@ class _SourceMonitor:
         except FileNotFoundError:
             self.running = False
             return
+        self.process = proc
+
+        # Read through local references: stop() runs on the UI thread and sets
+        # self.process to None, which could otherwise land between the loop
+        # check and the read and crash this thread.
+        stdout = proc.stdout
+        if stdout is None:
+            self.running = False
+            return
 
         chunk_size = int(48000 * self.channels * 2 * 0.015)
         chunk_size = chunk_size - (chunk_size % 2)
 
-        while self.running and self.process and self.process.poll() is None:
+        while self.running and proc.poll() is None:
             try:
-                data = self.process.stdout.read(chunk_size)
+                data = stdout.read(chunk_size)
                 if not data or len(data) < 4:
                     break
                 num_samples = len(data) // 2
