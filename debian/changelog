@@ -1,5 +1,29 @@
 # Tonal — Changelog
 
+## v1.0.6 — Routing Reliability
+
+- Routing configs are validated against live hardware before they are written; if any enabled channel's device is missing, nothing is written and the last good config stays in place
+- Save & Apply re-detects hardware first, so ALSA card renumbering (after a reboot, reconnect or firmware update) no longer produces a config pointing at the wrong card
+- Removed the PipeWire restart on every launch; Tonal now compares the on-disk config with the hardware present and asks for Save & Apply when it is out of date
+- At login, PipeWire is restarted once only when the config is correct but devices enumerated late
+- Routing rules for disabled or missing channels are skipped and logged instead of silently falling back to System
+- Fixed toasts showing no text when the message contained "&"
+- Fixed a VU meter thread crash when monitoring stopped mid-read
+- Package files are now owned by root
+- Update checks work behind TLS-inspecting firewalls (e.g. Palo Alto SSL decryption): the system CA store is still enforced, but Python 3.13's strict X.509 profile no longer rejects firewall-generated certificates that lack an Authority Key Identifier
+- Added CLAUDE.md project guide; build artifacts are ignored by git
+
+## v1.0.5 — In-App Updates and Hardware Detection
+
+- In-app update check, download and install from GitHub Releases (Status page)
+- Build script reads the version from constants.py and stamps the packaged copy; pre-flight compile and import checks before packaging
+- Expanded output detected by capability (10-channel PCM) instead of card name or index
+- Hotplug watch: USB port moves and (un)plugs are detected while Tonal is running
+- Every generated PipeWire block is flagged nofail, so a missing device can't stop PipeWire from starting
+- EQ band frequencies clamped to 20 Hz–20 kHz before reaching PipeWire
+- Raw USB Chat and USB 2 outputs pinned to 100% on apply
+- Status page lists the nodes Tonal actually generated
+
 ## v1.0.4 — Spectrum Analyzer
 
 - Added real-time spectrum analyzer to the Equalizer page (GStreamer-based)
