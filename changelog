@@ -10,6 +10,7 @@
 - Fixed toasts showing no text when the message contained "&"
 - Fixed a VU meter thread crash when monitoring stopped mid-read
 - Package files are now owned by root
+- Update checks work behind TLS-inspecting firewalls (e.g. Palo Alto SSL decryption): the system CA store is still enforced, but Python 3.13's strict X.509 profile no longer rejects firewall-generated certificates that lack an Authority Key Identifier
 - Added CLAUDE.md project guide; build artifacts are ignored by git
 
 ## v1.0.5 — In-App Updates and Hardware Detection

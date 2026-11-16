@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import shutil
+import ssl
 import subprocess
 import tempfile
 import urllib.error
@@ -33,6 +34,24 @@ _HEADERS = {
     "Accept": "application/vnd.github+json",
     "User-Agent": f"tonal-updater/{APP_VERSION}",
 }
+
+
+def _tls_context():
+    """System-trust TLS context without Python's strict X.509 profile.
+
+    Trust still comes from the OS store (/etc/ssl/certs) with full chain,
+    hostname and expiry checks. Only VERIFY_X509_STRICT is dropped: Python 3.13
+    turned it on by default, and it rejects certificates that TLS-inspecting
+    firewalls mint on the fly (e.g. PAN-OS forward-proxy leaves carry no
+    Authority Key Identifier) even when their CA is trusted system-wide. curl
+    and browsers accept those certificates; this matches them.
+    """
+    ctx = ssl.create_default_context()
+    ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    return ctx
+
+
+_TLS = _tls_context()
 
 
 def _normalize_tag(tag):
@@ -72,7 +91,7 @@ def check_for_update(timeout=10):
     """
     req = urllib.request.Request(UPDATE_API_URL, headers=_HEADERS)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=_TLS) as resp:
             data = json.load(resp)
     except urllib.error.HTTPError as e:
         if e.code == 404:
@@ -127,7 +146,7 @@ def download_update(asset_url, expected_size=0, timeout=120):
     fd, path = tempfile.mkstemp(prefix="tonal-update-", suffix=".deb")
     try:
         with os.fdopen(fd, "wb") as out, \
-                urllib.request.urlopen(req, timeout=timeout) as resp:
+                urllib.request.urlopen(req, timeout=timeout, context=_TLS) as resp:
             shutil.copyfileobj(resp, out)
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         _remove_quietly(path)
